@@ -43,6 +43,7 @@ class EnsembleMatcher:
         # Lazy loading
         self._embedding_model = None
         self._reranker_model = None
+        self._reranker_tokenizer = None
         self._faiss_index = None
         self._tfidf_vectorizer = None
         self._tfidf_matrix = None
@@ -58,12 +59,28 @@ class EnsembleMatcher:
 
     def _load_reranker_model(self):
         if self._reranker_model is None:
-            from sentence_transformers import CrossEncoder
-            self._reranker_model = CrossEncoder(
+            import torch
+            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+            self._reranker_tokenizer = AutoTokenizer.from_pretrained(
                 self.reranker_model_name,
-                device=self.device,
                 trust_remote_code=True
             )
+            # Set pad token if not defined
+            if self._reranker_tokenizer.pad_token is None:
+                self._reranker_tokenizer.pad_token = self._reranker_tokenizer.eos_token
+
+            self._reranker_model = AutoModelForSequenceClassification.from_pretrained(
+                self.reranker_model_name,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                trust_remote_code=True
+            )
+            # Set model's pad token id
+            if self._reranker_model.config.pad_token_id is None:
+                self._reranker_model.config.pad_token_id = self._reranker_tokenizer.pad_token_id
+
+            self._reranker_model.to(self.device)
+            self._reranker_model.eval()
 
     def index(self, corpus, show_progress=True):
         """
@@ -132,6 +149,8 @@ class EnsembleMatcher:
 
     def _rerank(self, query, candidate_indices):
         """Rerank candidates using cross-encoder."""
+        import torch
+
         if not candidate_indices:
             return None, 0.0
 
@@ -140,9 +159,22 @@ class EnsembleMatcher:
         candidates = [self._corpus[i] for i in candidate_indices]
         pairs = [[query, c] for c in candidates]
 
-        scores = self._reranker_model.predict(pairs, convert_to_numpy=True)
-        best_idx = int(np.argmax(scores))
+        # Tokenize and score
+        inputs = self._reranker_tokenizer(
+            pairs, padding=True, truncation=True, max_length=512, return_tensors="pt"
+        )
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
 
+        with torch.no_grad():
+            outputs = self._reranker_model(**inputs)
+            scores = outputs.logits
+            if scores.shape[-1] == 1:
+                scores = scores.squeeze(-1)
+            else:
+                scores = torch.softmax(scores, dim=-1)[:, 1]
+            scores = scores.cpu().numpy()
+
+        best_idx = int(np.argmax(scores))
         return candidates[best_idx], float(scores[best_idx])
 
     def match(self, queries, return_scores=False, show_progress=True):
