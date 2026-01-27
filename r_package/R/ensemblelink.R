@@ -57,7 +57,7 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
     "numpy",
     "pandas",
     "torch",
-    "transformers",
+    "transformers<5.0.0",
     "sentence-transformers",
     "scikit-learn",
     "tqdm",
