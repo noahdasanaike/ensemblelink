@@ -91,7 +91,7 @@ results <- ensemble_link(
   queries,
   corpus,
   embedding_model = "Qwen/Qwen3-Embedding-0.6B",
-  reranker_model = "jinaai/jina-reranker-v2-base-multilingual",
+  reranker_model = "jinaai/jina-reranker-v3",
   top_k = 30,
   return_scores = TRUE,
   show_progress = TRUE,
@@ -258,7 +258,7 @@ merged = merged.merge(
 
 | Model | Size | Speed | Notes |
 |-------|------|-------|-------|
-| `jinaai/jina-reranker-v2-base-multilingual` | 560MB | Medium | Multilingual support |
+| `jinaai/jina-reranker-v3` | 560MB | Medium | Multilingual support |
 | `cross-encoder/ms-marco-MiniLM-L-6-v2` | 80MB | Fast | English only |
 | `cross-encoder/ms-marco-TinyBERT-L-2-v2` | 17MB | Fastest | Lower quality |
 

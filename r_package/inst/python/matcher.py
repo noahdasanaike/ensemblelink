@@ -27,7 +27,7 @@ class EnsembleMatcher:
     def __init__(
         self,
         embedding_model="Qwen/Qwen3-Embedding-0.6B",
-        reranker_model="jinaai/jina-reranker-v2-base-multilingual",
+        reranker_model="jinaai/jina-reranker-v3",
         top_k=30,
         device="auto"
     ):

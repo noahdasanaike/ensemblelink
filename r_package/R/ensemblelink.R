@@ -123,7 +123,7 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #' @param embedding_model Name of sentence-transformers model for embeddings.
 #'   Default: "Qwen/Qwen3-Embedding-0.6B"
 #' @param reranker_model Name of cross-encoder model for reranking.
-#'   Default: "jinaai/jina-reranker-v2-base-multilingual"
+#'   Default: "jinaai/jina-reranker-v3"
 #' @param top_k Number of candidates to retrieve before reranking. Default: 30
 #' @param return_scores Logical; if TRUE, return match scores. Default: FALSE
 #' @param show_progress Logical; show progress bar. Default: TRUE
@@ -157,7 +157,7 @@ ensemble_link <- function(
     queries,
     corpus,
     embedding_model = "Qwen/Qwen3-Embedding-0.6B",
-    reranker_model = "jinaai/jina-reranker-v2-base-multilingual",
+    reranker_model = "jinaai/jina-reranker-v3",
     top_k = 30L,
     return_scores = FALSE,
     show_progress = TRUE,

@@ -25,7 +25,7 @@ class CrossEncoderReranker:
 
     def __init__(
         self,
-        model_name: str = "jinaai/jina-reranker-v2-base-multilingual",
+        model_name: str = "jinaai/jina-reranker-v3",
         device: Optional[str] = None,
     ):
         self.model_name = model_name
