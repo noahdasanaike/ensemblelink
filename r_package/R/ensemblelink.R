@@ -91,9 +91,20 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #' @keywords internal
 .init_python <- function() {
   if (is.null(.pkg_env$matcher)) {
-    # Configure Python environment if not already done
-    if (is.null(.pkg_env$configured) || !.pkg_env$configured) {
-      configure_python()
+    # Only configure if user hasn't already set up Python
+    # Check if Python is already available
+    python_available <- tryCatch({
+      reticulate::py_available(initialize = FALSE)
+    }, error = function(e) FALSE)
+
+    if (!python_available && (is.null(.pkg_env$configured) || !.pkg_env$configured)) {
+      # Try to configure, but don't fail if virtualenv doesn't exist
+      tryCatch({
+        configure_python()
+      }, error = function(e) {
+        message("Note: Could not find r-ensemblelink virtualenv. Using system Python.")
+        message("Run install_ensemblelink() to set up a dedicated environment.")
+      })
     }
 
     # Get path to bundled Python code
