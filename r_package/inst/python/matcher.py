@@ -43,7 +43,6 @@ class EnsembleMatcher:
         # Lazy loading
         self._embedding_model = None
         self._reranker_model = None
-        self._reranker_tokenizer = None
         self._faiss_index = None
         self._tfidf_vectorizer = None
         self._tfidf_matrix = None
@@ -59,24 +58,13 @@ class EnsembleMatcher:
 
     def _load_reranker_model(self):
         if self._reranker_model is None:
-            import torch
-            from transformers import AutoModelForSequenceClassification, AutoTokenizer
+            from transformers import AutoModel
 
-            self._reranker_tokenizer = AutoTokenizer.from_pretrained(self.reranker_model_name)
-            # Set pad token if not defined (required for batch processing)
-            if self._reranker_tokenizer.pad_token is None:
-                self._reranker_tokenizer.pad_token = self._reranker_tokenizer.eos_token
-
-            self._reranker_model = AutoModelForSequenceClassification.from_pretrained(
+            self._reranker_model = AutoModel.from_pretrained(
                 self.reranker_model_name,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                dtype="auto",
                 trust_remote_code=True,
             )
-            # Set model's pad token id
-            if self._reranker_model.config.pad_token_id is None:
-                self._reranker_model.config.pad_token_id = self._reranker_tokenizer.pad_token_id
-
-            self._reranker_model.to(self.device)
             self._reranker_model.eval()
 
     def index(self, corpus, show_progress=True):
@@ -146,32 +134,19 @@ class EnsembleMatcher:
 
     def _rerank(self, query, candidate_indices):
         """Rerank candidates using cross-encoder."""
-        import torch
-
         if not candidate_indices:
             return None, 0.0
 
         self._load_reranker_model()
 
         candidates = [self._corpus[i] for i in candidate_indices]
-        pairs = [[query, c] for c in candidates]
 
-        inputs = self._reranker_tokenizer(
-            pairs, padding=True, truncation=True, max_length=512, return_tensors="pt"
-        )
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        # Use Jina v3's built-in rerank method
+        results = self._reranker_model.rerank(query, candidates)
 
-        with torch.no_grad():
-            outputs = self._reranker_model(**inputs)
-            scores = outputs.logits
-            if scores.shape[-1] == 1:
-                scores = scores.squeeze(-1)
-            else:
-                scores = torch.softmax(scores, dim=-1)[:, 1]
-            scores = scores.cpu().numpy()
-
-        best_idx = int(np.argmax(scores))
-        return candidates[best_idx], float(scores[best_idx])
+        # Results are sorted by relevance, so first result is best match
+        best_result = results[0]
+        return best_result['document'], float(best_result['relevance_score'])
 
     def match(self, queries, return_scores=False, show_progress=True):
         """
