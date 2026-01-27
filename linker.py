@@ -16,7 +16,6 @@ def link(
     corpus: pd.DataFrame,
     column_query: str,
     column_corpus: Optional[str] = None,
-    threshold: float = 0.0,
     retrieval_top_k: int = 20,
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
@@ -39,8 +38,6 @@ def link(
     column_corpus : str, optional
         Column name in corpus containing the text to match.
         Defaults to column_query if not specified.
-    threshold : float
-        Minimum score to accept a match (0-1). Default: 0.0
     retrieval_top_k : int
         Number of candidates to retrieve per query. Default: 20
     embedding_model : str
@@ -56,8 +53,8 @@ def link(
         DataFrame with columns:
         - query_idx: Index in the query DataFrame
         - query_text: The query text
-        - match_idx: Index in the corpus DataFrame (None if no match)
-        - match_text: The matched text (None if no match)
+        - match_idx: Index in the corpus DataFrame
+        - match_text: The matched text
         - score: Confidence score
 
     Example
@@ -107,23 +104,18 @@ def link(
                 "query_text": query_text,
                 "match_idx": None,
                 "match_text": None,
-                "score": 0.0,
+                "score": None,
             })
             continue
 
         # Rerank candidates
         scores = reranker.score(query_text, candidate_texts)
 
-        # Find best match
+        # Return best match
         best_local_idx = int(np.argmax(scores))
         best_score = float(scores[best_local_idx])
-
-        if best_score >= threshold:
-            match_idx = candidate_indices[best_local_idx]
-            match_text = candidate_texts[best_local_idx]
-        else:
-            match_idx = None
-            match_text = None
+        match_idx = candidate_indices[best_local_idx]
+        match_text = candidate_texts[best_local_idx]
 
         results.append({
             "query_idx": query_idx,
