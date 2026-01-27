@@ -1,6 +1,6 @@
 # Zero-Shot Record Linkage
 
-Link records across datasets using pre-trained language models. No labeled training data or API keys required.
+State-of-the-art record linkage across datasets using pre-trained language models. No additional labeled training data or API keys required.
 
 **Paper**: [Zero-Shot Record Linkage with Ensemble Retrieval and Cross-Encoder Reranking](https://www.dropbox.com/scl/fi/tzvpp2lurejtbw6t4skds/ensemble_linkage.pdf?rlkey=00x7nxbto7d8r44m8igi4ldd1&e=2&st=7zpr8z8k&dl=0)
 
