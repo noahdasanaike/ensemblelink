@@ -6,25 +6,124 @@ Link records across datasets using pre-trained language models. No labeled train
 
 ## Table of Contents
 
-1. [Installation](#installation)
-2. [Quick Start](#quick-start)
+1. [R Package](#r-package)
+2. [Python Package](#python-package)
 3. [Configuration](#configuration)
-4. [Output Format](#output-format)
-5. [Hardware Requirements](#hardware-requirements)
-6. [Citation](#citation)
+4. [Hardware Requirements](#hardware-requirements)
+5. [Citation](#citation)
 
 ---
 
-## Installation
+## R Package
 
-### Step 1: Clone the repository
+### Installation
+
+```r
+# Install from GitHub
+devtools::install_github("noahdasanaike/zeroshot_linkage/r_package")
+```
+
+Then install the Python dependencies (required once):
+
+```r
+library(ensemblelink)
+
+# For GPU (recommended)
+install_ensemblelink(gpu = TRUE)
+
+# For CPU only
+install_ensemblelink(gpu = FALSE)
+```
+
+### Quick Start
+
+```r
+library(ensemblelink)
+
+# Your data
+queries <- c("John Smith", "Jane Doe", "Robert Johnson")
+corpus <- c("J. Smith", "Jane M. Doe", "Bob Wilson", "R. Johnson")
+
+# Link them
+results <- ensemble_link(queries, corpus)
+print(results)
+#>            query       match
+#> 1     John Smith    J. Smith
+#> 2       Jane Doe Jane M. Doe
+#> 3 Robert Johnson  R. Johnson
+```
+
+### With Match Scores
+
+```r
+results <- ensemble_link(queries, corpus, return_scores = TRUE)
+print(results)
+#>            query       match     score
+#> 1     John Smith    J. Smith 0.8472341
+#> 2       Jane Doe Jane M. Doe 0.9234521
+#> 3 Robert Johnson  R. Johnson 0.8123456
+```
+
+### With Data Frames
+
+```r
+# Load your data
+queries_df <- read.csv("queries.csv")
+corpus_df <- read.csv("corpus.csv")
+
+# Link using specific columns
+results <- ensemble_link(
+  queries = queries_df$name,
+  corpus = corpus_df$organization_name
+)
+
+# Add results back to your data
+queries_df$matched_name <- results$match
+queries_df$match_score <- results$score
+```
+
+### R Configuration Options
+
+```r
+results <- ensemble_link(
+  queries,
+  corpus,
+  embedding_model = "Qwen/Qwen3-Embedding-0.6B",
+  reranker_model = "jinaai/jina-reranker-v2-base-multilingual",
+  top_k = 30,
+  return_scores = TRUE,
+  show_progress = TRUE,
+  device = "auto"  # "cuda", "cpu", or "auto"
+)
+```
+
+### Specifying Python Environment
+
+```r
+# Use a specific conda environment
+configure_python(condaenv = "myenv")
+
+# Or a specific Python path
+configure_python(python = "/path/to/python")
+
+# Then run your linkage
+results <- ensemble_link(queries, corpus)
+```
+
+---
+
+## Python Package
+
+### Installation
+
+#### Step 1: Clone the repository
 
 ```bash
 git clone https://github.com/noahdasanaike/zeroshot_linkage.git
 cd zeroshot_linkage
 ```
 
-### Step 2: Create a virtual environment (recommended)
+#### Step 2: Create a virtual environment (recommended)
 
 ```bash
 python -m venv venv
@@ -36,7 +135,7 @@ venv\Scripts\activate
 source venv/bin/activate
 ```
 
-### Step 3: Install PyTorch
+#### Step 3: Install PyTorch
 
 Install PyTorch for your system from https://pytorch.org/get-started/locally/
 
@@ -50,13 +149,13 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 ```
 
-### Step 4: Install dependencies
+#### Step 4: Install dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 5: Install FAISS
+#### Step 5: Install FAISS
 
 **For GPU:**
 ```bash
@@ -68,7 +167,7 @@ pip install faiss-gpu
 pip install faiss-cpu
 ```
 
-### Step 6: Verify installation
+#### Step 6: Verify installation
 
 ```bash
 python -c "from zeroshot_linkage import link; print('Installation successful!')"
@@ -76,9 +175,7 @@ python -c "from zeroshot_linkage import link; print('Installation successful!')"
 
 The first run will download the embedding and reranker models (~2GB total). This only happens once.
 
----
-
-## Quick Start
+### Quick Start
 
 ```python
 import pandas as pd
@@ -107,108 +204,7 @@ Output:
 2          2  Robert Johnson          3   R. Johnson  0.812
 ```
 
----
-
-## Configuration
-
-### Basic Parameters
-
-```python
-results = link(
-    queries,                # DataFrame: records to match
-    corpus,                 # DataFrame: reference records to match against
-    column_query="name",    # str: column name in queries
-    column_corpus="name",   # str: column name in corpus (defaults to column_query)
-)
-```
-
-### Retrieval Candidates
-
-The `retrieval_top_k` parameter controls how many candidates are retrieved before reranking.
-
-```python
-# Retrieve more candidates (slower but may find better matches)
-results = link(queries, corpus, column_query="name", retrieval_top_k=50)
-
-# Retrieve fewer candidates (faster)
-results = link(queries, corpus, column_query="name", retrieval_top_k=10)
-```
-
-Default is 20, which works well for most cases.
-
-### Embedding Model
-
-The `embedding_model` parameter sets the model used for dense retrieval.
-
-```python
-# Default: best quality
-results = link(
-    queries, corpus, column_query="name",
-    embedding_model="Qwen/Qwen3-Embedding-0.6B"
-)
-
-# Alternative: faster, smaller, lower quality
-results = link(
-    queries, corpus, column_query="name",
-    embedding_model="sentence-transformers/all-MiniLM-L6-v2"
-)
-```
-
-| Model | Size | Speed | Quality |
-|-------|------|-------|---------|
-| `Qwen/Qwen3-Embedding-0.6B` | 600MB | Medium | Best |
-| `sentence-transformers/all-mpnet-base-v2` | 420MB | Medium | Good |
-| `sentence-transformers/all-MiniLM-L6-v2` | 80MB | Fast | Moderate |
-
-### Reranker Model
-
-The `reranker_model` parameter sets the cross-encoder used for scoring candidates.
-
-```python
-# Default: multilingual, good quality
-results = link(
-    queries, corpus, column_query="name",
-    reranker_model="jinaai/jina-reranker-v2-base-multilingual"
-)
-
-# Alternative: faster, English-only
-results = link(
-    queries, corpus, column_query="name",
-    reranker_model="cross-encoder/ms-marco-MiniLM-L-6-v2"
-)
-```
-
-| Model | Size | Speed | Notes |
-|-------|------|-------|-------|
-| `jinaai/jina-reranker-v2-base-multilingual` | 560MB | Medium | Multilingual support |
-| `cross-encoder/ms-marco-MiniLM-L-6-v2` | 80MB | Fast | English only |
-| `cross-encoder/ms-marco-TinyBERT-L-2-v2` | 17MB | Fastest | Lower quality |
-
-### Progress Bars
-
-```python
-# Disable progress bars (useful for scripts/logging)
-results = link(queries, corpus, column_query="name", show_progress=False)
-```
-
-### Full Example with All Options
-
-```python
-results = link(
-    queries,
-    corpus,
-    column_query="company_name",
-    column_corpus="organization_name",
-    retrieval_top_k=30,
-    embedding_model="Qwen/Qwen3-Embedding-0.6B",
-    reranker_model="jinaai/jina-reranker-v2-base-multilingual",
-    show_progress=True,
-)
-```
-
----
-
-## Output Format
+### Python Output Format
 
 The function returns a pandas DataFrame with these columns:
 
@@ -246,6 +242,33 @@ merged = merged.merge(
 
 ---
 
+## Configuration
+
+### Embedding Models
+
+| Model | Size | Speed | Quality |
+|-------|------|-------|---------|
+| `Qwen/Qwen3-Embedding-0.6B` | 600MB | Medium | Best |
+| `sentence-transformers/all-mpnet-base-v2` | 420MB | Medium | Good |
+| `sentence-transformers/all-MiniLM-L6-v2` | 80MB | Fast | Moderate |
+
+### Reranker Models
+
+| Model | Size | Speed | Notes |
+|-------|------|-------|-------|
+| `jinaai/jina-reranker-v2-base-multilingual` | 560MB | Medium | Multilingual support |
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | 80MB | Fast | English only |
+| `cross-encoder/ms-marco-TinyBERT-L-2-v2` | 17MB | Fastest | Lower quality |
+
+### Retrieval Candidates
+
+The `top_k` (R) or `retrieval_top_k` (Python) parameter controls how many candidates are retrieved before reranking. Default is 20-30.
+
+- **Higher values** (50+): Better recall, slower
+- **Lower values** (10): Faster, may miss matches
+
+---
+
 ## Hardware Requirements
 
 | Setup | RAM | Notes |
@@ -264,10 +287,10 @@ merged = merged.merge(
 ## Citation
 
 ```bibtex
-@article{dasanaike2025zeroshot,
+@article{dasanaike2026zeroshot,
   title={Zero-Shot Record Linkage with Ensemble Retrieval and Cross-Encoder Reranking},
   author={Dasanaike, Noah},
-  year={2025}
+  year={2026}
 }
 ```
 

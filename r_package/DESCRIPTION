@@ -1,0 +1,19 @@
+Package: ensemblelink
+Title: Zero-Shot Record Linkage with Ensemble Retrieval and Cross-Encoder Reranking
+Version: 0.1.0
+Authors@R:
+    person("Noah", "Dasanaike", email = "noahdasanaike@g.harvard.edu", role = c("aut", "cre"))
+Description: Performs fuzzy record linkage using ensemble retrieval (dense embeddings +
+    sparse TF-IDF) combined with cross-encoder reranking. Requires no labeled training
+    data and outperforms supervised methods on standard benchmarks. Uses Python backend
+    via reticulate.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.3
+Imports:
+    reticulate (>= 1.26)
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+SystemRequirements: Python (>= 3.9), PyTorch, sentence-transformers, faiss-cpu or faiss-gpu
