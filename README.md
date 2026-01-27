@@ -122,24 +122,6 @@ results = link(
 )
 ```
 
-### Threshold
-
-The `threshold` parameter sets the minimum score required to accept a match.
-
-**Default: 0.0** (always return the top candidate)
-
-Our experiments found that the cross-encoder reranker is accurate enough that accepting its top candidate maximizes F1 score. Setting a higher threshold reduces recall without meaningfully improving precision.
-
-```python
-# Default: accept the reranker's top candidate (recommended)
-results = link(queries, corpus, column_query="name", threshold=0.0)
-
-# Higher threshold: only return high-confidence matches
-results = link(queries, corpus, column_query="name", threshold=0.5)
-```
-
-Records with scores below the threshold will have `match_idx=None`.
-
 ### Retrieval Candidates
 
 The `retrieval_top_k` parameter controls how many candidates are retrieved before reranking.
@@ -217,7 +199,6 @@ results = link(
     corpus,
     column_query="company_name",
     column_corpus="organization_name",
-    threshold=0.0,
     retrieval_top_k=30,
     embedding_model="Qwen/Qwen3-Embedding-0.6B",
     reranker_model="jinaai/jina-reranker-v2-base-multilingual",
@@ -235,9 +216,9 @@ The function returns a pandas DataFrame with these columns:
 |--------|------|-------------|
 | `query_idx` | int | Row index in the query DataFrame |
 | `query_text` | str | The text that was matched |
-| `match_idx` | int or None | Row index in the corpus DataFrame |
-| `match_text` | str or None | The matched text |
-| `score` | float | Confidence score (0-1) |
+| `match_idx` | int | Row index in the corpus DataFrame |
+| `match_text` | str | The matched text |
+| `score` | float | Reranker score (higher is better) |
 
 ### Merging Results Back
 
