@@ -59,7 +59,8 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
     "torch",
     "sentence-transformers",
     "scikit-learn",
-    "tqdm"
+    "tqdm",
+    "einops"
   )
 
   if (gpu) {
