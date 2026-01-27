@@ -42,11 +42,17 @@ class CrossEncoderReranker:
                 self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
             self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            # Set pad token if not defined (required for batch processing)
+            if self._tokenizer.pad_token is None:
+                self._tokenizer.pad_token = self._tokenizer.eos_token
             self._model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_name,
                 torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
                 trust_remote_code=True,
             )
+            # Set model's pad token id
+            if self._model.config.pad_token_id is None:
+                self._model.config.pad_token_id = self._tokenizer.pad_token_id
             self._model.to(self.device)
             self._model.eval()
 
