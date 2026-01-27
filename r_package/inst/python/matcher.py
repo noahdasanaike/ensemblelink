@@ -62,18 +62,15 @@ class EnsembleMatcher:
             import torch
             from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-            self._reranker_tokenizer = AutoTokenizer.from_pretrained(
-                self.reranker_model_name,
-                trust_remote_code=True
-            )
-            # Set pad token if not defined
+            self._reranker_tokenizer = AutoTokenizer.from_pretrained(self.reranker_model_name)
+            # Set pad token if not defined (required for batch processing)
             if self._reranker_tokenizer.pad_token is None:
                 self._reranker_tokenizer.pad_token = self._reranker_tokenizer.eos_token
 
             self._reranker_model = AutoModelForSequenceClassification.from_pretrained(
                 self.reranker_model_name,
                 torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
-                trust_remote_code=True
+                trust_remote_code=True,
             )
             # Set model's pad token id
             if self._reranker_model.config.pad_token_id is None:
@@ -159,7 +156,6 @@ class EnsembleMatcher:
         candidates = [self._corpus[i] for i in candidate_indices]
         pairs = [[query, c] for c in candidates]
 
-        # Tokenize and score
         inputs = self._reranker_tokenizer(
             pairs, padding=True, truncation=True, max_length=512, return_tensors="pt"
         )
