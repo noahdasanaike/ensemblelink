@@ -8,26 +8,30 @@ NULL
 #'
 #' Set up the Python environment for ensemblelink. Call this before using
 #' ensemble_link() if you need to specify a particular Python installation.
+#' If called with no arguments, will use the "r-ensemblelink" virtualenv
+#' created by install_ensemblelink().
 #'
-#' @param python Path to Python executable, or NULL to use default
+#' @param python Path to Python executable, or NULL
 #' @param condaenv Name of conda environment to use, or NULL
-#' @param virtualenv Path to virtualenv, or NULL
+#' @param virtualenv Name or path of virtualenv. Default: "r-ensemblelink"
 #'
 #' @return Invisibly returns TRUE on success
 #' @export
 #'
 #' @examples
 #' \dontrun{
-#' configure_python(condaenv = "linkage")
+#' configure_python()  # Use default r-ensemblelink virtualenv
+#' configure_python(condaenv = "myenv")  # Use conda environment
 #' }
-configure_python <- function(python = NULL, condaenv = NULL, virtualenv = NULL) {
+configure_python <- function(python = NULL, condaenv = NULL, virtualenv = "r-ensemblelink") {
   if (!is.null(condaenv)) {
     reticulate::use_condaenv(condaenv, required = TRUE)
-  } else if (!is.null(virtualenv)) {
-    reticulate::use_virtualenv(virtualenv, required = TRUE)
   } else if (!is.null(python)) {
     reticulate::use_python(python, required = TRUE)
+  } else if (!is.null(virtualenv)) {
+    reticulate::use_virtualenv(virtualenv, required = TRUE)
   }
+  .pkg_env$configured <- TRUE
   invisible(TRUE)
 }
 
@@ -85,6 +89,11 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #' @keywords internal
 .init_python <- function() {
   if (is.null(.pkg_env$matcher)) {
+    # Configure Python environment if not already done
+    if (is.null(.pkg_env$configured) || !.pkg_env$configured) {
+      configure_python()
+    }
+
     # Get path to bundled Python code
     python_path <- system.file("python", "matcher.py", package = "ensemblelink")
 

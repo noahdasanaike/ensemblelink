@@ -23,17 +23,19 @@ State-of-the-art record linkage across datasets using pre-trained language model
 devtools::install_github("noahdasanaike/zeroshot_linkage/r_package")
 ```
 
-Then install the Python dependencies (required once):
+Then install the Python dependencies (one-time setup):
 
 ```r
 library(ensemblelink)
 
-# For GPU (recommended)
+# For GPU (recommended, much faster)
 install_ensemblelink(gpu = TRUE)
 
 # For CPU only
 install_ensemblelink(gpu = FALSE)
 ```
+
+After installing, **restart R** before using the package.
 
 ### Quick Start
 
