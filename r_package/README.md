@@ -1,6 +1,6 @@
-# ensemblelink
+# EnsembleLink
 
-Zero-shot record linkage in R using ensemble retrieval and cross-encoder reranking. No labeled training data required.
+Accurate record linkage in R without training data. Uses ensemble retrieval and cross-encoder reranking.
 
 ## Installation
 
@@ -107,8 +107,8 @@ The method requires no labeled training data and outperforms supervised approach
 ## Citation
 
 ```bibtex
-@article{dasanaike2026ensemble,
-  title={Zero-Shot Record Linkage with Ensemble Retrieval and Cross-Encoder Reranking},
+@article{dasanaike2026ensemblelink,
+  title={EnsembleLink: Accurate Record Linkage Without Training Data},
   author={Dasanaike, Noah},
   year={2026}
 }

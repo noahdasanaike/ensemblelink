@@ -1,8 +1,8 @@
-# Zero-Shot Record Linkage
+# EnsembleLink
 
-State-of-the-art record linkage across datasets using pre-trained language models. No additional labeled training data or API keys required. Bug reports welcome.
+Accurate record linkage without training data using pre-trained language models. No labeled examples or API keys required. Bug reports welcome.
 
-**Paper**: [Zero-Shot Record Linkage with Ensemble Retrieval and Cross-Encoder Reranking](https://www.dropbox.com/scl/fi/tzvpp2lurejtbw6t4skds/ensemble_linkage.pdf?rlkey=00x7nxbto7d8r44m8igi4ldd1&e=2&st=7zpr8z8k&dl=0)
+**Paper**: [EnsembleLink: Accurate Record Linkage Without Training Data](https://www.dropbox.com/scl/fi/tzvpp2lurejtbw6t4skds/ensemble_linkage.pdf?rlkey=00x7nxbto7d8r44m8igi4ldd1&e=2&st=7zpr8z8k&dl=0)
 
 ## Table of Contents
 
@@ -289,8 +289,8 @@ The `top_k` (R) or `retrieval_top_k` (Python) parameter controls how many candid
 ## Citation
 
 ```bibtex
-@article{dasanaike2026zeroshot,
-  title={Zero-Shot Record Linkage with Ensemble Retrieval and Cross-Encoder Reranking},
+@article{dasanaike2026ensemblelink,
+  title={EnsembleLink: Accurate Record Linkage Without Training Data},
   author={Dasanaike, Noah},
   year={2026}
 }

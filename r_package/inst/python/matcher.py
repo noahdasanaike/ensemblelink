@@ -64,6 +64,7 @@ class EnsembleMatcher:
                 self.reranker_model_name,
                 dtype="auto",
                 trust_remote_code=True,
+                device_map=self.device,
             )
             self._reranker_model.eval()
 

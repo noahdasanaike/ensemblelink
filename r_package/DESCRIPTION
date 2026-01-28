@@ -1,5 +1,5 @@
 Package: ensemblelink
-Title: Zero-Shot Record Linkage with Ensemble Retrieval and Cross-Encoder Reranking
+Title: EnsembleLink: Accurate Record Linkage Without Training Data
 Version: 0.1.0
 Authors@R:
     person("Noah", "Dasanaike", email = "noahdasanaike@g.harvard.edu", role = c("aut", "cre"))
