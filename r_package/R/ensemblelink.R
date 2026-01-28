@@ -29,7 +29,30 @@ configure_python <- function(python = NULL, condaenv = NULL, virtualenv = "r-ens
   } else if (!is.null(python)) {
     reticulate::use_python(python, required = TRUE)
   } else if (!is.null(virtualenv)) {
-    reticulate::use_virtualenv(virtualenv, required = TRUE)
+    # Check if virtualenv exists in reticulate's known locations
+    venv_list <- tryCatch(reticulate::virtualenv_list(), error = function(e) character(0))
+    if (virtualenv %in% venv_list) {
+      reticulate::use_virtualenv(virtualenv, required = TRUE)
+    } else {
+      # Try common locations on Windows and Unix
+      home <- Sys.getenv("USERPROFILE", Sys.getenv("HOME"))
+      possible_paths <- c(
+        file.path(home, ".virtualenvs", virtualenv),
+        file.path(Sys.getenv("LOCALAPPDATA"), "r-reticulate", "virtualenvs", virtualenv),
+        file.path(home, "Documents", "virtualenvs", virtualenv)
+      )
+      found <- FALSE
+      for (path in possible_paths) {
+        if (dir.exists(path)) {
+          reticulate::use_virtualenv(path, required = TRUE)
+          found <- TRUE
+          break
+        }
+      }
+      if (!found) {
+        stop("Could not find virtualenv: ", virtualenv)
+      }
+    }
   }
   .pkg_env$configured <- TRUE
   invisible(TRUE)
