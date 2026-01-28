@@ -1,6 +1,6 @@
 # Zero-Shot Record Linkage
 
-State-of-the-art record linkage across datasets using pre-trained language models. No additional labeled training data or API keys required.
+State-of-the-art record linkage across datasets using pre-trained language models. No additional labeled training data or API keys required. Bug reports welcome.
 
 **Paper**: [Zero-Shot Record Linkage with Ensemble Retrieval and Cross-Encoder Reranking](https://www.dropbox.com/scl/fi/tzvpp2lurejtbw6t4skds/ensemble_linkage.pdf?rlkey=00x7nxbto7d8r44m8igi4ldd1&e=2&st=7zpr8z8k&dl=0)
 
@@ -28,11 +28,11 @@ Then install the Python dependencies (one-time setup):
 ```r
 library(ensemblelink)
 
+# For CPU only (most laptop use-cases)
+install_ensemblelink(gpu = FALSE)
+
 # For GPU (recommended, much faster)
 install_ensemblelink(gpu = TRUE)
-
-# For CPU only
-install_ensemblelink(gpu = FALSE)
 ```
 
 After installing, **restart R** before using the package.
