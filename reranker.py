@@ -25,7 +25,7 @@ class CrossEncoderReranker:
 
     def __init__(
         self,
-        model_name: str = "jinaai/jina-reranker-v3",
+        model_name: str = "jinaai/jina-reranker-v2-base-multilingual",
         device: Optional[str] = None,
     ):
         self.model_name = model_name
@@ -36,18 +36,18 @@ class CrossEncoderReranker:
         """Lazy load the reranker model."""
         if self._model is None:
             import torch
-            from transformers import AutoModel
+            from transformers import AutoModelForSequenceClassification
 
             if self.device is None:
                 self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-            # Jina v3 requires AutoModel with dtype="auto" and trust_remote_code
-            self._model = AutoModel.from_pretrained(
+            # Jina v2 Multilingual uses AutoModelForSequenceClassification
+            self._model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_name,
-                dtype="auto",
+                torch_dtype="auto",
                 trust_remote_code=True,
-                device_map=self.device,
             )
+            self._model.to(self.device)
             self._model.eval()
 
     def score(self, query: str, candidates: List[str]) -> np.ndarray:
@@ -71,12 +71,8 @@ class CrossEncoderReranker:
 
         self._load_model()
 
-        # Use Jina v3's built-in rerank method
-        results = self._model.rerank(query, candidates)
+        # Use Jina v2's compute_score method
+        pairs = [[query, c] for c in candidates]
+        scores = self._model.compute_score(pairs, max_length=1024)
 
-        # Build score array matching original candidate order
-        # Results come back sorted by relevance, but we need scores in original order
-        doc_to_score = {r['document']: r['relevance_score'] for r in results}
-        scores = np.array([doc_to_score.get(c, 0.0) for c in candidates])
-
-        return scores
+        return np.array(scores)

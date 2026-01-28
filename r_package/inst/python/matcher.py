@@ -27,7 +27,7 @@ class EnsembleMatcher:
     def __init__(
         self,
         embedding_model="Qwen/Qwen3-Embedding-0.6B",
-        reranker_model="jinaai/jina-reranker-v3",
+        reranker_model="jinaai/jina-reranker-v2-base-multilingual",
         top_k=30,
         device="auto"
     ):
@@ -58,14 +58,14 @@ class EnsembleMatcher:
 
     def _load_reranker_model(self):
         if self._reranker_model is None:
-            from transformers import AutoModel
+            from transformers import AutoModelForSequenceClassification
 
-            self._reranker_model = AutoModel.from_pretrained(
+            self._reranker_model = AutoModelForSequenceClassification.from_pretrained(
                 self.reranker_model_name,
-                dtype="auto",
+                torch_dtype="auto",
                 trust_remote_code=True,
-                device_map=self.device,
             )
+            self._reranker_model.to(self.device)
             self._reranker_model.eval()
 
     def index(self, corpus, show_progress=True):
@@ -142,12 +142,13 @@ class EnsembleMatcher:
 
         candidates = [self._corpus[i] for i in candidate_indices]
 
-        # Use Jina v3's built-in rerank method
-        results = self._reranker_model.rerank(query, candidates)
+        # Use Jina v2's compute_score method
+        pairs = [[query, c] for c in candidates]
+        scores = self._reranker_model.compute_score(pairs, max_length=1024)
 
-        # Results are sorted by relevance, so first result is best match
-        best_result = results[0]
-        return best_result['document'], float(best_result['relevance_score'])
+        # Find best match
+        best_idx = int(np.argmax(scores))
+        return candidates[best_idx], float(scores[best_idx])
 
     def match(self, queries, return_scores=False, show_progress=True):
         """

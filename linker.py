@@ -18,7 +18,7 @@ def link(
     column_corpus: Optional[str] = None,
     retrieval_top_k: int = 20,
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
-    reranker_model: str = "jinaai/jina-reranker-v3",
+    reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
     show_progress: bool = True,
 ) -> pd.DataFrame:
     """
@@ -43,7 +43,7 @@ def link(
     embedding_model : str
         Model for dense retrieval. Default: "Qwen/Qwen3-Embedding-0.6B"
     reranker_model : str
-        Model for reranking. Default: "jinaai/jina-reranker-v3"
+        Model for reranking. Default: "jinaai/jina-reranker-v2-base-multilingual"
     show_progress : bool
         Whether to show progress bars. Default: True
 

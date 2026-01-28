@@ -90,7 +90,7 @@ configure_python(python = "/path/to/python")
 | `queries` | (required) | Character vector of strings to match |
 | `corpus` | (required) | Character vector of reference strings |
 | `embedding_model` | "Qwen/Qwen3-Embedding-0.6B" | Sentence-transformers model for embeddings |
-| `reranker_model` | "jinaai/jina-reranker-v3" | Cross-encoder for reranking |
+| `reranker_model` | "jinaai/jina-reranker-v2-base-multilingual" | Cross-encoder for reranking |
 | `top_k` | 30 | Candidates to retrieve before reranking |
 | `return_scores` | FALSE | Return match confidence scores |
 | `show_progress` | TRUE | Show progress bar |
