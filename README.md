@@ -61,9 +61,9 @@ print(results)
 results <- ensemble_link(queries, corpus, return_scores = TRUE)
 print(results)
 #>            query       match     score
-#> 1     John Smith    J. Smith 0.8472341
-#> 2       Jane Doe Jane M. Doe 0.9234521
-#> 3 Robert Johnson  R. Johnson 0.8123456
+#> 1     John Smith    J. Smith 0.7098244
+#> 2       Jane Doe Jane M. Doe 0.8300437
+#> 3 Robert Johnson  R. Johnson 0.4683043
 ```
 
 ### With Data Frames
