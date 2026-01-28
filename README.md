@@ -20,7 +20,7 @@ Accurate record linkage without training data using pre-trained language models.
 
 ```r
 # Install from GitHub
-devtools::install_github("noahdasanaike/zeroshot_linkage/r_package")
+devtools::install_github("noahdasanaike/ensemblelink/r_package")
 ```
 
 Then install the Python dependencies (one-time setup):
