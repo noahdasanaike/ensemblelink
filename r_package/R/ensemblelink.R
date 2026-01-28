@@ -23,36 +23,32 @@ NULL
 #' configure_python()  # Use default r-ensemblelink virtualenv
 #' configure_python(condaenv = "myenv")  # Use conda environment
 #' }
-configure_python <- function(python = NULL, condaenv = NULL, virtualenv = "r-ensemblelink") {
+configure_python <- function(python = NULL, condaenv = NULL, virtualenv = NULL, envname = "r-ensemblelink") {
   if (!is.null(condaenv)) {
     reticulate::use_condaenv(condaenv, required = TRUE)
   } else if (!is.null(python)) {
     reticulate::use_python(python, required = TRUE)
   } else if (!is.null(virtualenv)) {
-    # Check if virtualenv exists in reticulate's known locations
-    venv_list <- tryCatch(reticulate::virtualenv_list(), error = function(e) character(0))
-    if (virtualenv %in% venv_list) {
-      reticulate::use_virtualenv(virtualenv, required = TRUE)
-    } else {
-      # Try common locations on Windows and Unix
-      home <- Sys.getenv("USERPROFILE", Sys.getenv("HOME"))
-      possible_paths <- c(
-        file.path(home, ".virtualenvs", virtualenv),
-        file.path(Sys.getenv("LOCALAPPDATA"), "r-reticulate", "virtualenvs", virtualenv),
-        file.path(home, "Documents", "virtualenvs", virtualenv)
-      )
-      found <- FALSE
-      for (path in possible_paths) {
-        if (dir.exists(path)) {
-          reticulate::use_virtualenv(path, required = TRUE)
-          found <- TRUE
-          break
-        }
-      }
-      if (!found) {
-        stop("Could not find virtualenv: ", virtualenv)
-      }
+    reticulate::use_virtualenv(virtualenv, required = TRUE)
+  } else {
+    # Try to find the environment by name - check both conda and virtualenv
+    # First check conda environments
+    conda_list <- tryCatch(reticulate::conda_list(), error = function(e) data.frame(name = character(0)))
+    if (envname %in% conda_list$name) {
+      reticulate::use_condaenv(envname, required = TRUE)
+      .pkg_env$configured <- TRUE
+      return(invisible(TRUE))
     }
+
+    # Then check virtualenvs
+    venv_list <- tryCatch(reticulate::virtualenv_list(), error = function(e) character(0))
+    if (envname %in% venv_list) {
+      reticulate::use_virtualenv(envname, required = TRUE)
+      .pkg_env$configured <- TRUE
+      return(invisible(TRUE))
+    }
+
+    stop("Could not find environment: ", envname, ". Run install_ensemblelink() first.")
   }
   .pkg_env$configured <- TRUE
   invisible(TRUE)
