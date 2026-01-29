@@ -112,64 +112,65 @@ configure_python(python = "/path/to/python")
 results <- ensemble_link(queries, corpus)
 ```
 
+### Hierarchical Blocking (R)
+
+Use `ensemble_link_blocked()` when you need to match on multiple levels - for example, matching states first, then counties within matched states:
+
+```r
+# Match states first, then counties within states
+results <- ensemble_link_blocked(
+  query_blocks = c("Kalifornia", "Texass"),
+  query_details = c("Los Angelos", "Harris Co"),
+  corpus_blocks = c("California", "California", "Texas", "Texas"),
+  corpus_details = c("Los Angeles", "San Francisco", "Harris", "Dallas"),
+  return_scores = TRUE
+)
+
+print(results)
+#>   query_block query_detail match_block match_detail match_index block_score detail_score
+#> 1  Kalifornia  Los Angelos  California  Los Angeles           1       0.892        0.945
+#> 2      Texass    Harris Co       Texas       Harris           3       0.876        0.823
+```
+
 ---
 
 ## Python Package
 
 ### Installation
 
-#### Step 1: Clone the repository
+#### Option A: Install with pip (recommended)
 
 ```bash
-git clone https://github.com/noahdasanaike/zeroshot_linkage.git
-cd zeroshot_linkage
+pip install git+https://github.com/noahdasanaike/ensemblelink.git
 ```
 
-#### Step 2: Create a virtual environment (recommended)
+Or clone and install locally:
 
 ```bash
-python -m venv venv
-
-# On Windows:
-venv\Scripts\activate
-
-# On Mac/Linux:
-source venv/bin/activate
+git clone https://github.com/noahdasanaike/ensemblelink.git
+cd ensemblelink
+pip install -e .
 ```
 
-#### Step 3: Install PyTorch
+#### Option B: Manual installation
 
-Install PyTorch for your system from https://pytorch.org/get-started/locally/
-
-**For GPU (NVIDIA CUDA):**
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu121
-```
-
-**For CPU only:**
-```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-```
-
-#### Step 4: Install dependencies
+If you need more control over dependencies (e.g., GPU support):
 
 ```bash
-pip install -r requirements.txt
-```
+git clone https://github.com/noahdasanaike/ensemblelink.git
+cd ensemblelink
 
-#### Step 5: Install FAISS
+# Install PyTorch for your system from https://pytorch.org/get-started/locally/
+# For GPU: pip install torch --index-url https://download.pytorch.org/whl/cu121
+# For CPU: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
-**For GPU:**
-```bash
+pip install -e .
+
+# For GPU FAISS (optional, faster):
 pip install faiss-gpu
 ```
 
-**For CPU:**
-```bash
-pip install faiss-cpu
-```
-
-#### Step 6: Verify installation
+#### Verify installation
 
 ```bash
 python -c "from zeroshot_linkage import link; print('Installation successful!')"
@@ -239,6 +240,52 @@ merged = merged.merge(
     right_index=True,
     how="left",
     suffixes=("_query", "_corpus")
+)
+```
+
+### Hierarchical Blocking
+
+Use `link_blocked` when you need to match on multiple levels - for example, matching states first, then counties within matched states:
+
+```python
+from zeroshot_linkage import link_blocked
+
+queries = pd.DataFrame({
+    "state": ["Kalifornia", "Texass", "New Yrok"],
+    "county": ["Los Angelos", "Harris Co", "Queens County"]
+})
+
+corpus = pd.DataFrame({
+    "state": ["California", "California", "Texas", "Texas", "New York"],
+    "county": ["Los Angeles", "San Francisco", "Harris", "Dallas", "Queens"]
+})
+
+results = link_blocked(
+    queries, corpus,
+    blocking_query="state",
+    detail_query="county"
+)
+
+print(results)
+```
+
+Output:
+```
+   query_idx query_block   query_detail  match_idx match_block  match_detail  block_score  detail_score
+0          0  Kalifornia    Los Angelos          0  California   Los Angeles        0.892         0.945
+1          1      Texass      Harris Co          2       Texas        Harris        0.876         0.823
+2          2    New Yrok  Queens County          4    New York        Queens        0.834         0.891
+```
+
+### Custom Model Cache Directory
+
+By default, models are downloaded to `~/.cache/huggingface/`. To use a custom directory:
+
+```python
+results = link(
+    queries, corpus,
+    column_query="name",
+    cache_dir="/path/to/models"
 )
 ```
 

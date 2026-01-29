@@ -4,6 +4,9 @@ NULL
 # Package environment to store Python module reference
 .pkg_env <- new.env(parent = emptyenv())
 
+# Store BlockedMatcher reference
+.pkg_env$blocked_matcher <- NULL
+
 #' Configure Python Environment
 #'
 #' Set up the Python environment for ensemblelink. Call this before using
@@ -136,8 +139,9 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
     # Source the Python code
     reticulate::source_python(python_path)
 
-    # Store reference to the matcher class
+    # Store reference to the matcher classes
     .pkg_env$matcher <- EnsembleMatcher
+    .pkg_env$blocked_matcher <- BlockedMatcher
     .pkg_env$initialized <- TRUE
   }
 }
@@ -233,6 +237,162 @@ ensemble_link <- function(
     df <- data.frame(
       query = queries,
       match = results,
+      stringsAsFactors = FALSE
+    )
+  }
+
+  return(df)
+}
+
+
+#' Zero-Shot Record Linkage with Blocking
+#'
+#' Link records using hierarchical blocking - match high-level groups first
+#' (e.g., states), then match details within those groups (e.g., counties).
+#'
+#' @param query_blocks Character vector of query blocking values (e.g., state names)
+#' @param query_details Character vector of query detail values (e.g., county names)
+#' @param corpus_blocks Character vector of corpus blocking values
+#' @param corpus_details Character vector of corpus detail values
+#' @param embedding_model Name of sentence-transformers model for embeddings.
+#'   Default: "Qwen/Qwen3-Embedding-0.6B"
+#' @param reranker_model Name of cross-encoder model for reranking.
+#'   Default: "jinaai/jina-reranker-v2-base-multilingual"
+#' @param top_k Number of candidates to retrieve before reranking. Default: 30
+#' @param return_scores Logical; if TRUE, return match scores. Default: FALSE
+#' @param show_progress Logical; show progress bar. Default: TRUE
+#' @param device Device for inference: "cuda", "cpu", or "auto". Default: "auto"
+#'
+#' @return A data frame with columns:
+#'   \item{query_block}{Original query blocking value}
+#'   \item{query_detail}{Original query detail value}
+#'   \item{match_block}{Matched corpus blocking value}
+#'   \item{match_detail}{Matched corpus detail value}
+#'   \item{match_index}{Index in the corpus (1-based)}
+#'   \item{block_score}{Block match score (if return_scores = TRUE)}
+#'   \item{detail_score}{Detail match score (if return_scores = TRUE)}
+#'
+#' @export
+#'
+#' @examples
+#' \dontrun{
+#' # Match states first, then counties within states
+#' query_states <- c("Kalifornia", "Texass", "New Yrok")
+#' query_counties <- c("Los Angelos", "Harris Co", "Queens County")
+#'
+#' corpus_states <- c("California", "California", "Texas", "Texas", "New York")
+#' corpus_counties <- c("Los Angeles", "San Francisco", "Harris", "Dallas", "Queens")
+#'
+#' results <- ensemble_link_blocked(
+#'   query_blocks = query_states,
+#'   query_details = query_counties,
+#'   corpus_blocks = corpus_states,
+#'   corpus_details = corpus_counties
+#' )
+#'
+#' # With scores
+#' results <- ensemble_link_blocked(
+#'   query_blocks = query_states,
+#'   query_details = query_counties,
+#'   corpus_blocks = corpus_states,
+#'   corpus_details = corpus_counties,
+#'   return_scores = TRUE
+#' )
+#' }
+ensemble_link_blocked <- function(
+    query_blocks,
+    query_details,
+    corpus_blocks,
+    corpus_details,
+    embedding_model = "Qwen/Qwen3-Embedding-0.6B",
+    reranker_model = "jinaai/jina-reranker-v2-base-multilingual",
+    top_k = 30L,
+    return_scores = FALSE,
+    show_progress = TRUE,
+    device = "auto"
+) {
+  # Validate inputs
+  if (!is.character(query_blocks) || length(query_blocks) == 0) {
+    stop("'query_blocks' must be a non-empty character vector")
+  }
+  if (!is.character(query_details) || length(query_details) == 0) {
+    stop("'query_details' must be a non-empty character vector")
+  }
+  if (length(query_blocks) != length(query_details)) {
+    stop("'query_blocks' and 'query_details' must have the same length")
+  }
+  if (!is.character(corpus_blocks) || length(corpus_blocks) == 0) {
+    stop("'corpus_blocks' must be a non-empty character vector")
+  }
+  if (!is.character(corpus_details) || length(corpus_details) == 0) {
+    stop("'corpus_details' must be a non-empty character vector")
+  }
+  if (length(corpus_blocks) != length(corpus_details)) {
+    stop("'corpus_blocks' and 'corpus_details' must have the same length")
+  }
+
+  # Initialize Python backend
+  .init_python()
+
+  # Create blocked matcher instance
+  matcher <- .pkg_env$blocked_matcher(
+    embedding_model = embedding_model,
+    reranker_model = reranker_model,
+    top_k = as.integer(top_k),
+    device = device
+  )
+
+  # Index corpus
+  if (show_progress) message("Indexing corpus (", length(corpus_blocks), " records)...")
+  matcher$index(corpus_blocks, corpus_details, show_progress = show_progress)
+
+  # Match queries
+  if (show_progress) message("Matching ", length(query_blocks), " queries...")
+  results <- matcher$match(
+    query_blocks, query_details,
+    return_scores = return_scores,
+    show_progress = show_progress
+  )
+
+  # Convert to data frame
+  # Convert None/NULL to NA and adjust indices to 1-based
+  match_indices <- sapply(results$match_indices, function(x) {
+    if (is.null(x)) NA_integer_ else as.integer(x) + 1L  # Convert to 1-based
+  })
+
+  match_details <- sapply(results$match_details, function(x) {
+    if (is.null(x)) NA_character_ else as.character(x)
+  })
+
+  match_blocks <- sapply(results$match_blocks, function(x) {
+    if (is.null(x)) NA_character_ else as.character(x)
+  })
+
+  if (return_scores) {
+    block_scores <- sapply(results$block_scores, function(x) {
+      if (is.null(x)) NA_real_ else as.numeric(x)
+    })
+    detail_scores <- sapply(results$detail_scores, function(x) {
+      if (is.null(x)) NA_real_ else as.numeric(x)
+    })
+
+    df <- data.frame(
+      query_block = query_blocks,
+      query_detail = query_details,
+      match_block = match_blocks,
+      match_detail = match_details,
+      match_index = match_indices,
+      block_score = block_scores,
+      detail_score = detail_scores,
+      stringsAsFactors = FALSE
+    )
+  } else {
+    df <- data.frame(
+      query_block = query_blocks,
+      query_detail = query_details,
+      match_block = match_blocks,
+      match_detail = match_details,
+      match_index = match_indices,
       stringsAsFactors = FALSE
     )
   }

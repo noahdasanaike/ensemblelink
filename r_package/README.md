@@ -73,6 +73,35 @@ results <- ensemble_link(
 )
 ```
 
+### Hierarchical Blocking
+
+Use `ensemble_link_blocked()` when you need to match on multiple levels - for example, matching states first, then counties within matched states:
+
+```r
+# Query data
+query_states <- c("Kalifornia", "Texass", "New Yrok")
+query_counties <- c("Los Angelos", "Harris Co", "Queens County")
+
+# Corpus data
+corpus_states <- c("California", "California", "Texas", "Texas", "New York")
+corpus_counties <- c("Los Angeles", "San Francisco", "Harris", "Dallas", "Queens")
+
+# Match with blocking
+results <- ensemble_link_blocked(
+  query_blocks = query_states,
+  query_details = query_counties,
+  corpus_blocks = corpus_states,
+  corpus_details = corpus_counties,
+  return_scores = TRUE
+)
+
+print(results)
+#>   query_block   query_detail match_block match_detail match_index block_score detail_score
+#> 1  Kalifornia    Los Angelos  California  Los Angeles           1       0.892        0.945
+#> 2      Texass      Harris Co       Texas       Harris           3       0.876        0.823
+#> 3    New Yrok  Queens County    New York       Queens           5       0.834        0.891
+```
+
 ### Specifying Python Environment
 
 ```r
