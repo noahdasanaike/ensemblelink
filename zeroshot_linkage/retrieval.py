@@ -22,6 +22,8 @@ class EnsembleRetriever:
         Number of candidates to retrieve from each method.
     device : str, optional
         Device for embedding model ("cuda" or "cpu").
+    cache_dir : str, optional
+        Directory to download/cache models. Defaults to HuggingFace cache.
     """
 
     def __init__(
@@ -29,10 +31,12 @@ class EnsembleRetriever:
         embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
         top_k: int = 20,
         device: Optional[str] = None,
+        cache_dir: Optional[str] = None,
     ):
         self.embedding_model_name = embedding_model
         self.top_k = top_k
         self.device = device
+        self.cache_dir = cache_dir
 
         self._embed_model = None
         self._faiss_index = None
@@ -48,6 +52,7 @@ class EnsembleRetriever:
             self._embed_model = SentenceTransformer(
                 self.embedding_model_name,
                 device=self.device,
+                cache_folder=self.cache_dir,
             )
 
     def index(self, texts: List[str], show_progress: bool = True) -> None:

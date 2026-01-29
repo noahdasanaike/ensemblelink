@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zeroshot-linkage"
+version = "1.0.0"
+description = "Zero-shot record linkage with ensemble retrieval and cross-encoder reranking"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+authors = [
+    {name = "Noah Dasanaike"}
+]
+keywords = ["record-linkage", "entity-matching", "nlp", "machine-learning"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "sentence-transformers>=2.2.0",
+    "torch>=2.0.0",
+    "faiss-cpu>=1.7.4",
+    "scikit-learn>=1.3.0",
+    "transformers>=4.35.0",
+    "tqdm>=4.65.0",
+]
+
+[project.optional-dependencies]
+gpu = ["faiss-gpu>=1.7.4"]
+
+[project.urls]
+Homepage = "https://github.com/noahdasanaike/ensemblelink"
+Repository = "https://github.com/noahdasanaike/ensemblelink"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["zeroshot_linkage*"]

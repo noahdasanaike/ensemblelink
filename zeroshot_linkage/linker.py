@@ -20,6 +20,7 @@ def link(
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
     show_progress: bool = True,
+    cache_dir: Optional[str] = None,
 ) -> pd.DataFrame:
     """
     Link records from queries to corpus using zero-shot matching.
@@ -46,6 +47,8 @@ def link(
         Model for reranking. Default: "jinaai/jina-reranker-v2-base-multilingual"
     show_progress : bool
         Whether to show progress bars. Default: True
+    cache_dir : str, optional
+        Directory to download/cache models. Defaults to HuggingFace cache (~/.cache/huggingface).
 
     Returns
     -------
@@ -81,11 +84,12 @@ def link(
     retriever = EnsembleRetriever(
         embedding_model=embedding_model,
         top_k=retrieval_top_k,
+        cache_dir=cache_dir,
     )
     retriever.index(corpus_texts, show_progress=show_progress)
 
     # Initialize reranker
-    reranker = CrossEncoderReranker(model_name=reranker_model)
+    reranker = CrossEncoderReranker(model_name=reranker_model, cache_dir=cache_dir)
 
     # Link each query
     results = []

@@ -21,15 +21,19 @@ class CrossEncoderReranker:
         HuggingFace model name for the cross-encoder.
     device : str, optional
         Device for inference ("cuda" or "cpu").
+    cache_dir : str, optional
+        Directory to download/cache models. Defaults to HuggingFace cache.
     """
 
     def __init__(
         self,
         model_name: str = "jinaai/jina-reranker-v2-base-multilingual",
         device: Optional[str] = None,
+        cache_dir: Optional[str] = None,
     ):
         self.model_name = model_name
         self.device = device
+        self.cache_dir = cache_dir
         self._model = None
 
     def _load_model(self):
@@ -46,6 +50,7 @@ class CrossEncoderReranker:
                 self.model_name,
                 torch_dtype="auto",
                 trust_remote_code=True,
+                cache_dir=self.cache_dir,
             )
             self._model.to(self.device)
             self._model.eval()
