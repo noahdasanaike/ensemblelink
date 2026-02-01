@@ -213,14 +213,18 @@ def link_blocked(
     queries = queries.reset_index(drop=True)
     corpus = corpus.reset_index(drop=True)
 
+    # Get corpus block values and detail texts
+    corpus_blocks = corpus[blocking_corpus].astype(str).tolist()
+    corpus_details = corpus[detail_corpus].astype(str).tolist()
+
     # Step 1: Match blocking values (e.g., states)
     unique_query_blocks = queries[blocking_query].astype(str).unique().tolist()
-    unique_corpus_blocks = corpus[blocking_corpus].astype(str).unique().tolist()
+    unique_corpus_blocks = list(set(corpus_blocks))
 
     if show_progress:
         print(f"Matching {len(unique_query_blocks)} unique blocking values...")
 
-    # Build retriever for blocking
+    # Build retriever for blocking (small - just unique block names)
     block_retriever = EnsembleRetriever(
         embedding_model=embedding_model,
         top_k=min(retrieval_top_k, len(unique_corpus_blocks)),
@@ -245,33 +249,28 @@ def link_blocked(
         best_idx = int(np.argmax(scores))
         block_mapping[query_block] = (candidate_blocks[best_idx], float(scores[best_idx]))
 
-    # Step 2: For each query row, match details within the matched block
+    # Step 2: Build ONE retriever for entire detail corpus (OPTIMIZED)
     if show_progress:
-        print("Matching details within blocks...")
+        print(f"Building detail index for {len(corpus_details)} records...")
 
-    # Pre-build indices for each corpus block
-    corpus_by_block = {}
-    for block_val in set(m[0] for m in block_mapping.values() if m[0] is not None):
-        mask = corpus[blocking_corpus].astype(str) == block_val
-        block_corpus = corpus[mask]
-        if len(block_corpus) > 0:
-            corpus_by_block[block_val] = {
-                "indices": block_corpus.index.tolist(),
-                "texts": block_corpus[detail_corpus].astype(str).tolist(),
-            }
+    detail_retriever = EnsembleRetriever(
+        embedding_model=embedding_model,
+        top_k=retrieval_top_k * 5,  # Retrieve more, filter by block later
+        cache_dir=cache_dir,
+    )
+    detail_retriever.index(corpus_details, show_progress=show_progress)
 
-    # Build detail retrievers for each block
-    detail_retrievers = {}
-    for block_val, block_data in corpus_by_block.items():
-        retriever = EnsembleRetriever(
-            embedding_model=embedding_model,
-            top_k=min(retrieval_top_k, len(block_data["texts"])),
-            cache_dir=cache_dir,
-        )
-        retriever.index(block_data["texts"], show_progress=False)
-        detail_retrievers[block_val] = retriever
+    # Pre-compute block membership for fast filtering
+    block_to_indices = {}
+    for idx, block in enumerate(corpus_blocks):
+        if block not in block_to_indices:
+            block_to_indices[block] = set()
+        block_to_indices[block].add(idx)
 
     # Match each query
+    if show_progress:
+        print("Linking records...")
+
     results = []
     iterator = queries.iterrows()
     if show_progress:
@@ -283,7 +282,7 @@ def link_blocked(
 
         matched_block, block_score = block_mapping.get(query_block, (None, None))
 
-        if matched_block is None or matched_block not in corpus_by_block:
+        if matched_block is None or matched_block not in block_to_indices:
             results.append({
                 "query_idx": query_idx,
                 "query_block": query_block,
@@ -296,13 +295,18 @@ def link_blocked(
             })
             continue
 
-        # Retrieve detail candidates within the block
-        block_data = corpus_by_block[matched_block]
-        detail_retriever = detail_retrievers[matched_block]
+        # Retrieve candidates from full corpus, then filter by block
+        all_candidate_indices = detail_retriever.retrieve(query_detail)
+        valid_indices = block_to_indices[matched_block]
 
-        candidate_local_indices = detail_retriever.retrieve(query_detail)
-        candidate_texts = [block_data["texts"][i] for i in candidate_local_indices]
-        candidate_corpus_indices = [block_data["indices"][i] for i in candidate_local_indices]
+        # Filter to only candidates in the matched block
+        candidate_indices = [i for i in all_candidate_indices if i in valid_indices]
+
+        if not candidate_indices:
+            # Fallback: if no candidates after filtering, try all in block
+            candidate_indices = list(valid_indices)[:retrieval_top_k]
+
+        candidate_texts = [corpus_details[i] for i in candidate_indices]
 
         if not candidate_texts:
             results.append({
@@ -319,9 +323,10 @@ def link_blocked(
 
         # Rerank detail candidates
         detail_scores = reranker.score(query_detail, candidate_texts)
+        detail_scores = np.atleast_1d(detail_scores)  # Handle scalar case
         best_local_idx = int(np.argmax(detail_scores))
         best_detail_score = float(detail_scores[best_local_idx])
-        match_idx = candidate_corpus_indices[best_local_idx]
+        match_idx = candidate_indices[best_local_idx]
         match_detail = candidate_texts[best_local_idx]
 
         results.append({
