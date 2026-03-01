@@ -68,7 +68,7 @@ class EnsembleMatcher:
             self._reranker_model.to(self.device)
             self._reranker_model.eval()
 
-    def index(self, corpus, show_progress=True):
+    def index(self, corpus, show_progress=True, batch_size=50000):
         """
         Build retrieval indices for the corpus.
 
@@ -78,6 +78,9 @@ class EnsembleMatcher:
             Reference strings to match against.
         show_progress : bool
             Show progress bar during indexing.
+        batch_size : int
+            Number of texts to embed at once. Lower values reduce peak memory
+            for large corpora. Default: 50,000.
         """
         import faiss
         from sklearn.feature_extraction.text import TfidfVectorizer
@@ -87,13 +90,33 @@ class EnsembleMatcher:
         # Load embedding model
         self._load_embedding_model()
 
-        # Dense embeddings
-        embeddings = self._embedding_model.encode(
-            self._corpus,
-            normalize_embeddings=True,
-            show_progress_bar=show_progress,
-            convert_to_numpy=True
-        ).astype(np.float32)
+        # Dense embeddings (batched for large corpora)
+        if len(self._corpus) <= batch_size:
+            embeddings = self._embedding_model.encode(
+                self._corpus,
+                normalize_embeddings=True,
+                show_progress_bar=show_progress,
+                convert_to_numpy=True
+            ).astype(np.float32)
+        else:
+            first_batch = self._embedding_model.encode(
+                self._corpus[:1],
+                normalize_embeddings=True,
+                convert_to_numpy=True,
+            )
+            dim = first_batch.shape[1]
+            embeddings = np.empty((len(self._corpus), dim), dtype=np.float32)
+            embeddings[0] = first_batch[0]
+
+            for start in range(1, len(self._corpus), batch_size):
+                end = min(start + batch_size, len(self._corpus))
+                batch_embs = self._embedding_model.encode(
+                    self._corpus[start:end],
+                    normalize_embeddings=True,
+                    show_progress_bar=show_progress,
+                    convert_to_numpy=True,
+                ).astype(np.float32)
+                embeddings[start:end] = batch_embs
 
         # FAISS index
         dim = embeddings.shape[1]

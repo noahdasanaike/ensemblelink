@@ -23,6 +23,7 @@ For hierarchical matching (e.g., states then counties):
 """
 
 from .linker import link, link_blocked
+from .occupations import build_unified_corpus, deduplicate_corpus, EnsembleOcc
 
 __version__ = "1.0.0"
-__all__ = ["link", "link_blocked"]
+__all__ = ["link", "link_blocked", "build_unified_corpus", "deduplicate_corpus", "EnsembleOcc"]

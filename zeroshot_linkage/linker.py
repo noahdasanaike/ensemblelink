@@ -21,6 +21,7 @@ def link(
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
     show_progress: bool = True,
     cache_dir: Optional[str] = None,
+    batch_size: int = 50000,
 ) -> pd.DataFrame:
     """
     Link records from queries to corpus using zero-shot matching.
@@ -49,6 +50,9 @@ def link(
         Whether to show progress bars. Default: True
     cache_dir : str, optional
         Directory to download/cache models. Defaults to HuggingFace cache (~/.cache/huggingface).
+    batch_size : int
+        Number of corpus texts to embed at once. Lower values reduce peak memory
+        for large corpora. Default: 50,000.
 
     Returns
     -------
@@ -86,7 +90,7 @@ def link(
         top_k=retrieval_top_k,
         cache_dir=cache_dir,
     )
-    retriever.index(corpus_texts, show_progress=show_progress)
+    retriever.index(corpus_texts, show_progress=show_progress, batch_size=batch_size)
 
     # Initialize reranker
     reranker = CrossEncoderReranker(model_name=reranker_model, cache_dir=cache_dir)
@@ -144,6 +148,7 @@ def link_blocked(
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
     show_progress: bool = True,
     cache_dir: Optional[str] = None,
+    batch_size: int = 50000,
 ) -> pd.DataFrame:
     """
     Link records using hierarchical blocking - match high-level groups first,
@@ -175,6 +180,9 @@ def link_blocked(
         Whether to show progress bars. Default: True
     cache_dir : str, optional
         Directory to download/cache models.
+    batch_size : int
+        Number of corpus texts to embed at once. Lower values reduce peak memory
+        for large corpora. Default: 50,000.
 
     Returns
     -------
@@ -258,7 +266,7 @@ def link_blocked(
         top_k=retrieval_top_k * 5,  # Retrieve more, filter by block later
         cache_dir=cache_dir,
     )
-    detail_retriever.index(corpus_details, show_progress=show_progress)
+    detail_retriever.index(corpus_details, show_progress=show_progress, batch_size=batch_size)
 
     # Pre-compute block membership for fast filtering
     block_to_indices = {}

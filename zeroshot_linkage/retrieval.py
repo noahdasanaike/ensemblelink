@@ -30,11 +30,15 @@ class EnsembleRetriever:
         self,
         embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
         top_k: int = 20,
+        ngram_range: tuple = (2, 4),
+        max_features: int = 50000,
         device: Optional[str] = None,
         cache_dir: Optional[str] = None,
     ):
         self.embedding_model_name = embedding_model
         self.top_k = top_k
+        self.ngram_range = ngram_range
+        self.max_features = max_features
         self.device = device
         self.cache_dir = cache_dir
 
@@ -55,7 +59,12 @@ class EnsembleRetriever:
                 cache_folder=self.cache_dir,
             )
 
-    def index(self, texts: List[str], show_progress: bool = True) -> None:
+    def index(
+        self,
+        texts: List[str],
+        show_progress: bool = True,
+        batch_size: int = 50000,
+    ) -> None:
         """
         Build retrieval indices for the corpus.
 
@@ -65,6 +74,11 @@ class EnsembleRetriever:
             List of corpus texts to index.
         show_progress : bool
             Whether to show progress bar for embedding generation.
+        batch_size : int
+            Number of texts to embed at once. Lower values reduce peak memory
+            usage for large corpora. Default 50,000 works well up to ~1M records
+            on a 16 GB GPU; reduce to 10,000-20,000 for CPU-only or constrained
+            environments.
         """
         import faiss
         from sklearn.feature_extraction.text import TfidfVectorizer
@@ -74,12 +88,33 @@ class EnsembleRetriever:
         # Build dense index
         self._load_embedding_model()
 
-        embeddings = self._embed_model.encode(
-            texts,
-            normalize_embeddings=True,
-            show_progress_bar=show_progress,
-            convert_to_numpy=True,
-        ).astype(np.float32)
+        if len(texts) <= batch_size:
+            embeddings = self._embed_model.encode(
+                texts,
+                normalize_embeddings=True,
+                show_progress_bar=show_progress,
+                convert_to_numpy=True,
+            ).astype(np.float32)
+        else:
+            # Batched encoding for large corpora to avoid OOM
+            first_batch = self._embed_model.encode(
+                texts[:1],
+                normalize_embeddings=True,
+                convert_to_numpy=True,
+            )
+            dim = first_batch.shape[1]
+            embeddings = np.empty((len(texts), dim), dtype=np.float32)
+            embeddings[0] = first_batch[0]
+
+            for start in range(1, len(texts), batch_size):
+                end = min(start + batch_size, len(texts))
+                batch_embs = self._embed_model.encode(
+                    texts[start:end],
+                    normalize_embeddings=True,
+                    show_progress_bar=show_progress,
+                    convert_to_numpy=True,
+                ).astype(np.float32)
+                embeddings[start:end] = batch_embs
 
         dim = embeddings.shape[1]
         self._faiss_index = faiss.IndexFlatIP(dim)
@@ -88,9 +123,9 @@ class EnsembleRetriever:
         # Build sparse index
         self._tfidf_vectorizer = TfidfVectorizer(
             analyzer="char",
-            ngram_range=(2, 4),
+            ngram_range=self.ngram_range,
             lowercase=True,
-            max_features=50000,
+            max_features=self.max_features,
         )
         self._tfidf_matrix = self._tfidf_vectorizer.fit_transform(texts)
 
