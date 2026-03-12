@@ -14,8 +14,10 @@ from .reranker import CrossEncoderReranker
 def link(
     queries: pd.DataFrame,
     corpus: pd.DataFrame,
-    column_query: str,
+    column_query: str = None,
     column_corpus: Optional[str] = None,
+    columns_query: Optional[list] = None,
+    columns_corpus: Optional[list] = None,
     retrieval_top_k: int = 20,
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
@@ -29,17 +31,30 @@ def link(
     Uses ensemble retrieval (dense + sparse) to find candidates, then
     a cross-encoder to score them. All models run locally - no API keys needed.
 
+    For multi-column matching, pass ``columns_query`` (and optionally
+    ``columns_corpus``) instead of ``column_query``. The columns are
+    concatenated with " | " separators before matching. Concatenation
+    consistently outperforms blocking-based approaches across benchmarks
+    (see Dasanaike 2026, Table 3).
+
     Parameters
     ----------
     queries : pd.DataFrame
         The dataset to find matches for.
     corpus : pd.DataFrame
         The reference dataset to match against.
-    column_query : str
+    column_query : str, optional
         Column name in queries containing the text to match.
+        Mutually exclusive with columns_query.
     column_corpus : str, optional
         Column name in corpus containing the text to match.
         Defaults to column_query if not specified.
+    columns_query : list of str, optional
+        Multiple column names in queries to concatenate for matching.
+        Mutually exclusive with column_query.
+    columns_corpus : list of str, optional
+        Multiple column names in corpus to concatenate for matching.
+        Defaults to columns_query if not specified.
     retrieval_top_k : int
         Number of candidates to retrieve per query. Default: 20
     embedding_model : str
@@ -59,9 +74,9 @@ def link(
     pd.DataFrame
         DataFrame with columns:
         - query_idx: Index in the query DataFrame
-        - query_text: The query text
+        - query_text: The query text (concatenated if multiple columns)
         - match_idx: Index in the corpus DataFrame
-        - match_text: The matched text
+        - match_text: The matched text (concatenated if multiple columns)
         - score: Confidence score
 
     Example
@@ -69,20 +84,35 @@ def link(
     >>> import pandas as pd
     >>> from zeroshot_linkage import link
     >>>
+    >>> # Single column
     >>> queries = pd.DataFrame({"name": ["John Smith", "Jane Doe"]})
     >>> corpus = pd.DataFrame({"name": ["J. Smith", "Jane M. Doe", "Bob Wilson"]})
-    >>>
     >>> results = link(queries, corpus, column_query="name")
-    >>> print(results)
+    >>>
+    >>> # Multiple columns (concatenated automatically)
+    >>> queries = pd.DataFrame({"city": ["OKC", "SF"], "state": ["OK", "CA"]})
+    >>> corpus = pd.DataFrame({"city": ["Oklahoma City", "San Francisco"], "state": ["OK", "CA"]})
+    >>> results = link(queries, corpus, columns_query=["city", "state"])
     """
-    if column_corpus is None:
-        column_corpus = column_query
+    if column_query is not None and columns_query is not None:
+        raise ValueError("Specify either column_query or columns_query, not both.")
+    if column_query is None and columns_query is None:
+        raise ValueError("Specify either column_query or columns_query.")
 
     # Prepare data
     queries = queries.reset_index(drop=True)
     corpus = corpus.reset_index(drop=True)
-    query_texts = queries[column_query].astype(str).tolist()
-    corpus_texts = corpus[column_corpus].astype(str).tolist()
+
+    if columns_query is not None:
+        if columns_corpus is None:
+            columns_corpus = columns_query
+        query_texts = queries[columns_query].astype(str).agg(" | ".join, axis=1).tolist()
+        corpus_texts = corpus[columns_corpus].astype(str).agg(" | ".join, axis=1).tolist()
+    else:
+        if column_corpus is None:
+            column_corpus = column_query
+        query_texts = queries[column_query].astype(str).tolist()
+        corpus_texts = corpus[column_corpus].astype(str).tolist()
 
     # Build retrieval index
     retriever = EnsembleRetriever(

@@ -153,6 +153,15 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #' retrieval (dense + sparse) and cross-encoder reranking. Requires no
 #' labeled training data.
 #'
+#' For multi-column matching, concatenate columns with \code{paste()} before
+#' calling this function. Concatenation consistently outperforms blocking-based
+#' approaches across benchmarks (see Dasanaike 2026, Table 3):
+#' \preformatted{
+#' queries <- paste(df$city, df$state, sep = " | ")
+#' corpus  <- paste(ref$city, ref$state, sep = " | ")
+#' results <- ensemble_link(queries, corpus)
+#' }
+#'
 #' @param queries Character vector of query strings to match
 #' @param corpus Character vector of reference strings to match against
 #' @param embedding_model Name of sentence-transformers model for embeddings.
@@ -176,6 +185,11 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #' # Basic usage
 #' queries <- c("New York City", "Los Angelas", "Chcago")
 #' corpus <- c("New York, NY", "Los Angeles, CA", "Chicago, IL", "Houston, TX")
+#' results <- ensemble_link(queries, corpus)
+#'
+#' # Multi-column: concatenate with " | "
+#' queries <- paste(df$city, df$state, sep = " | ")
+#' corpus  <- paste(ref$city, ref$state, sep = " | ")
 #' results <- ensemble_link(queries, corpus)
 #'
 #' # With scores
