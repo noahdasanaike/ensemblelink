@@ -73,6 +73,20 @@ results <- ensemble_link(
 )
 ```
 
+### Multi-Column Matching
+
+When matching on multiple columns (e.g., city + state), concatenate them before calling `ensemble_link()`. Concatenation consistently outperforms blocking-based approaches across benchmarks (see Dasanaike 2026, Table 3):
+
+```r
+# Combine columns with a separator
+queries <- paste(df$city, df$state, sep = " | ")
+corpus  <- paste(ref$city, ref$state, sep = " | ")
+
+results <- ensemble_link(queries, corpus)
+```
+
+The `" | "` separator works well in practice — it is rare enough to avoid collisions while being a single token in most embedding models. Any consistent delimiter will work.
+
 ### Hierarchical Blocking
 
 Use `ensemble_link_blocked()` when you need to match on multiple levels - for example, matching states first, then counties within matched states:
