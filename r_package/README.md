@@ -1,6 +1,6 @@
 # EnsembleLink
 
-Accurate record linkage in R without training data. Uses ensemble retrieval and cross-encoder reranking.
+Accurate record linkage in R without training data. Uses ensemble retrieval and four-expert agreement fusion.
 
 ## Installation
 
@@ -19,16 +19,12 @@ The package requires Python with several ML libraries. Install them with:
 ```r
 library(ensemblelink)
 
-# CPU-only (slower but works everywhere)
 install_ensemblelink()
-
-# With GPU support (recommended)
-install_ensemblelink(gpu = TRUE)
 ```
 
 Or manually in Python:
 ```bash
-pip install torch sentence-transformers faiss-cpu scikit-learn tqdm
+pip install torch "sentence-transformers>=2.7" rapidfuzz scikit-learn tqdm einops
 ```
 
 ## Usage
@@ -132,18 +128,24 @@ configure_python(python = "/path/to/python")
 |-----------|---------|-------------|
 | `queries` | (required) | Character vector of strings to match |
 | `corpus` | (required) | Character vector of reference strings |
-| `embedding_model` | "Qwen/Qwen3-Embedding-0.6B" | Sentence-transformers model for embeddings |
-| `reranker_model` | "jinaai/jina-reranker-v2-base-multilingual" | Cross-encoder for reranking |
-| `top_k` | 30 | Candidates to retrieve before reranking |
-| `return_scores` | FALSE | Return match confidence scores |
+| `embedding_model` | "microsoft/harrier-oss-v1-0.6b" | Sentence-transformers model for embeddings |
+| `reranker_model` | "jinaai/jina-reranker-v2-base-multilingual" | First cross-encoder reranker |
+| `reranker_model_2` | "BAAI/bge-reranker-v2-m3" | Second cross-encoder reranker (NULL for one) |
+| `pool_size` | 50 | Candidates retrieved from each of dense and sparse |
+| `return_scores` | FALSE | Return fused match scores |
 | `show_progress` | TRUE | Show progress bar |
 | `device` | "auto" | "cuda", "cpu", or "auto" |
 
 ## How It Works
 
-1. **Ensemble Retrieval**: Combines dense semantic embeddings (FAISS) with sparse character n-grams (TF-IDF) to find candidate matches
-2. **Cross-Encoder Reranking**: Jointly scores query-candidate pairs using a transformer model
-3. **Top-1 Selection**: Returns the highest-scoring candidate
+For each query, EnsembleLink retrieves a candidate pool (the union of the top dense-embedding and top character-n-gram TF-IDF matches) and scores every candidate with four complementary experts:
+
+1. **Reranker ensemble** — two cross-encoders (Jina v2 and BGE v2-m3) score query-candidate pairs jointly; their z-scored ranks are summed.
+2. **CSLS-corrected dense cosine** — embedding cosine with a hubness penalty.
+3. **Sparse TF-IDF cosine** — character-n-gram overlap.
+4. **Jaro-Winkler** — classical lexical similarity.
+
+The experts are fused **without any labeled data**: each expert's weight is the squared fraction of queries on which its top pick agrees with the consensus. The weighted sum decides the match.
 
 The method requires no labeled training data and outperforms supervised approaches on standard benchmarks.
 

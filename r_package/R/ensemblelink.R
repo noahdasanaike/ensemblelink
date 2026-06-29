@@ -64,7 +64,8 @@ configure_python <- function(python = NULL, condaenv = NULL, virtualenv = NULL, 
 #' @param method Installation method: "auto", "conda", or "virtualenv"
 #' @param conda Path to conda executable (if method = "conda")
 #' @param envname Name of environment to create/use
-#' @param gpu Logical; install GPU-enabled packages (faiss-gpu, CUDA torch)
+#' @param gpu Deprecated and ignored; GPU is used automatically when a CUDA
+#'   build of PyTorch is available. Retained for backward compatibility.
 #'
 #' @return Invisibly returns TRUE on success
 #' @export
@@ -72,7 +73,7 @@ configure_python <- function(python = NULL, condaenv = NULL, virtualenv = NULL, 
 #' @examples
 #' \dontrun{
 #' install_ensemblelink()
-#' install_ensemblelink(method = "conda", envname = "ensemblelink", gpu = TRUE)
+#' install_ensemblelink(method = "conda", envname = "ensemblelink")
 #' }
 install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-ensemblelink", gpu = FALSE) {
   packages <- c(
@@ -80,17 +81,12 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
     "pandas",
     "torch",
     "transformers<5.0.0",
-    "sentence-transformers",
+    "sentence-transformers>=2.7.0",
     "scikit-learn",
+    "rapidfuzz",
     "tqdm",
     "einops"
   )
-
-  if (gpu) {
-    packages <- c(packages, "faiss-gpu")
-  } else {
-    packages <- c(packages, "faiss-cpu")
-  }
 
   reticulate::py_install(
     packages = packages,
@@ -149,9 +145,11 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 
 #' Zero-Shot Record Linkage
 #'
-#' Link records from a query dataset to a reference corpus using ensemble
-#' retrieval (dense + sparse) and cross-encoder reranking. Requires no
-#' labeled training data.
+#' Link records from a query dataset to a reference corpus using four-expert
+#' agreement fusion: candidates are retrieved by an embedding-plus-TF-IDF
+#' ensemble and scored by a two-model reranker ensemble, a CSLS-corrected dense
+#' cosine, a sparse TF-IDF cosine, and Jaro-Winkler similarity, then fused
+#' without labels. Requires no labeled training data.
 #'
 #' For multi-column matching, concatenate columns with \code{paste()} before
 #' calling this function. Concatenation consistently outperforms blocking-based
@@ -165,18 +163,21 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #' @param queries Character vector of query strings to match
 #' @param corpus Character vector of reference strings to match against
 #' @param embedding_model Name of sentence-transformers model for embeddings.
-#'   Default: "Qwen/Qwen3-Embedding-0.6B"
-#' @param reranker_model Name of cross-encoder model for reranking.
+#'   Default: "microsoft/harrier-oss-v1-0.6b"
+#' @param reranker_model Name of the first cross-encoder reranker.
 #'   Default: "jinaai/jina-reranker-v2-base-multilingual"
-#' @param top_k Number of candidates to retrieve before reranking. Default: 30
-#' @param return_scores Logical; if TRUE, return match scores. Default: FALSE
+#' @param reranker_model_2 Name of the second cross-encoder reranker, or NULL for
+#'   a single reranker. Default: "BAAI/bge-reranker-v2-m3"
+#' @param pool_size Number of candidates retrieved from each of dense and sparse
+#'   retrieval (their union forms the pool). Default: 50
+#' @param return_scores Logical; if TRUE, return fused match scores. Default: FALSE
 #' @param show_progress Logical; show progress bar. Default: TRUE
 #' @param device Device for inference: "cuda", "cpu", or "auto". Default: "auto"
 #'
 #' @return A data frame with columns:
 #'   \item{query}{Original query string}
 #'   \item{match}{Best matching reference string}
-#'   \item{score}{Match score (if return_scores = TRUE)}
+#'   \item{score}{Fused match score (if return_scores = TRUE)}
 #'
 #' @export
 #'
@@ -205,9 +206,10 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 ensemble_link <- function(
     queries,
     corpus,
-    embedding_model = "Qwen/Qwen3-Embedding-0.6B",
+    embedding_model = "microsoft/harrier-oss-v1-0.6b",
     reranker_model = "jinaai/jina-reranker-v2-base-multilingual",
-    top_k = 30L,
+    reranker_model_2 = "BAAI/bge-reranker-v2-m3",
+    pool_size = 50L,
     return_scores = FALSE,
     show_progress = TRUE,
     device = "auto"
@@ -227,7 +229,8 @@ ensemble_link <- function(
   matcher <- .pkg_env$matcher(
     embedding_model = embedding_model,
     reranker_model = reranker_model,
-    top_k = as.integer(top_k),
+    reranker_model_2 = reranker_model_2,
+    pool_size = as.integer(pool_size),
     device = device
   )
 
@@ -269,10 +272,13 @@ ensemble_link <- function(
 #' @param corpus_blocks Character vector of corpus blocking values
 #' @param corpus_details Character vector of corpus detail values
 #' @param embedding_model Name of sentence-transformers model for embeddings.
-#'   Default: "Qwen/Qwen3-Embedding-0.6B"
-#' @param reranker_model Name of cross-encoder model for reranking.
+#'   Default: "microsoft/harrier-oss-v1-0.6b"
+#' @param reranker_model Name of the first cross-encoder reranker.
 #'   Default: "jinaai/jina-reranker-v2-base-multilingual"
-#' @param top_k Number of candidates to retrieve before reranking. Default: 30
+#' @param reranker_model_2 Name of the second cross-encoder reranker, or NULL for
+#'   a single reranker. Default: "BAAI/bge-reranker-v2-m3"
+#' @param pool_size Number of candidates retrieved from each of dense and sparse
+#'   retrieval. Default: 50
 #' @param return_scores Logical; if TRUE, return match scores. Default: FALSE
 #' @param show_progress Logical; show progress bar. Default: TRUE
 #' @param device Device for inference: "cuda", "cpu", or "auto". Default: "auto"
@@ -318,9 +324,10 @@ ensemble_link_blocked <- function(
     query_details,
     corpus_blocks,
     corpus_details,
-    embedding_model = "Qwen/Qwen3-Embedding-0.6B",
+    embedding_model = "microsoft/harrier-oss-v1-0.6b",
     reranker_model = "jinaai/jina-reranker-v2-base-multilingual",
-    top_k = 30L,
+    reranker_model_2 = "BAAI/bge-reranker-v2-m3",
+    pool_size = 50L,
     return_scores = FALSE,
     show_progress = TRUE,
     device = "auto"
@@ -352,7 +359,8 @@ ensemble_link_blocked <- function(
   matcher <- .pkg_env$blocked_matcher(
     embedding_model = embedding_model,
     reranker_model = reranker_model,
-    top_k = as.integer(top_k),
+    reranker_model_2 = reranker_model_2,
+    pool_size = as.integer(pool_size),
     device = device
   )
 

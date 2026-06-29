@@ -1,14 +1,45 @@
 """
-Zero-shot record linkage function.
+Zero-shot record linkage.
+
+``link`` matches a query table to a reference corpus with the four-expert
+agreement-fusion core (see :mod:`zeroshot_linkage.core`). ``link_blocked`` adds
+hierarchical blocking: it matches a coarse field first (e.g. state) and then
+matches a detail field (e.g. county) only within the matched block. No labeled
+training data is required for either.
 """
 
 import pandas as pd
 import numpy as np
-from typing import Optional
-from tqdm import tqdm
+from typing import List, Optional, Sequence
 
-from .retrieval import EnsembleRetriever
-from .reranker import CrossEncoderReranker
+from .core import FusionMatcher, DEFAULT_EMBEDDING_MODEL, DEFAULT_RERANKER_MODELS
+
+
+def _resolve_rerankers(reranker_models, reranker_model):
+    """Honor the legacy single ``reranker_model`` kwarg if a caller passes it."""
+    if reranker_model is not None:
+        return [reranker_model]
+    return list(reranker_models)
+
+
+def _build_matcher(
+    embedding_model,
+    reranker_models,
+    reranker_model,
+    pool_size,
+    retrieval_top_k,
+    device,
+    cache_dir,
+) -> FusionMatcher:
+    if retrieval_top_k is not None:
+        pool_size = retrieval_top_k
+    return FusionMatcher(
+        embedding_model=embedding_model,
+        reranker_models=_resolve_rerankers(reranker_models, reranker_model),
+        pool_size=pool_size,
+        device=device,
+        cache_dir=cache_dir,
+    )
 
 
 def link(
@@ -18,24 +49,29 @@ def link(
     column_corpus: Optional[str] = None,
     columns_query: Optional[list] = None,
     columns_corpus: Optional[list] = None,
-    retrieval_top_k: int = 20,
-    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
-    reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
+    pool_size: int = 50,
+    retrieval_top_k: Optional[int] = None,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    reranker_models: Sequence[str] = DEFAULT_RERANKER_MODELS,
+    reranker_model: Optional[str] = None,
     show_progress: bool = True,
     cache_dir: Optional[str] = None,
     batch_size: int = 50000,
+    device: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Link records from queries to corpus using zero-shot matching.
+    Link records from queries to corpus with four-expert agreement fusion.
 
-    Uses ensemble retrieval (dense + sparse) to find candidates, then
-    a cross-encoder to score them. All models run locally - no API keys needed.
+    Candidates are retrieved by an embedding-plus-TF-IDF ensemble and then scored
+    by four experts (a two-model reranker ensemble, a CSLS-corrected dense
+    cosine, a sparse TF-IDF cosine, and Jaro-Winkler similarity). The experts are
+    fused without labels by weighting each one by how often it agrees with the
+    consensus pick. All models run locally; no API keys are needed.
 
     For multi-column matching, pass ``columns_query`` (and optionally
-    ``columns_corpus``) instead of ``column_query``. The columns are
-    concatenated with " | " separators before matching. Concatenation
-    consistently outperforms blocking-based approaches across benchmarks
-    (see Dasanaike 2026, Table 3).
+    ``columns_corpus``) instead of ``column_query``. Columns are concatenated
+    with " | " separators before matching. Concatenation consistently
+    outperforms blocking-based approaches across benchmarks (see Dasanaike 2026).
 
     Parameters
     ----------
@@ -44,62 +80,53 @@ def link(
     corpus : pd.DataFrame
         The reference dataset to match against.
     column_query : str, optional
-        Column name in queries containing the text to match.
-        Mutually exclusive with columns_query.
+        Column in queries containing the text to match. Mutually exclusive with
+        ``columns_query``.
     column_corpus : str, optional
-        Column name in corpus containing the text to match.
-        Defaults to column_query if not specified.
+        Column in corpus to match against. Defaults to ``column_query``.
     columns_query : list of str, optional
-        Multiple column names in queries to concatenate for matching.
-        Mutually exclusive with column_query.
+        Multiple query columns to concatenate. Mutually exclusive with
+        ``column_query``.
     columns_corpus : list of str, optional
-        Multiple column names in corpus to concatenate for matching.
-        Defaults to columns_query if not specified.
-    retrieval_top_k : int
-        Number of candidates to retrieve per query. Default: 20
+        Multiple corpus columns to concatenate. Defaults to ``columns_query``.
+    pool_size : int
+        Candidates retrieved per query from each of dense and sparse retrieval.
+        Default: 50. ``retrieval_top_k`` is accepted as an alias.
     embedding_model : str
-        Model for dense retrieval. Default: "Qwen/Qwen3-Embedding-0.6B"
-    reranker_model : str
-        Model for reranking. Default: "jinaai/jina-reranker-v2-base-multilingual"
+        Dense embedding model. Default: harrier-oss-v1-0.6b.
+    reranker_models : sequence of str
+        Cross-encoder rerankers forming the reranker expert. Default: Jina v2 and
+        BGE v2-m3. Pass a single ``reranker_model`` to use just one.
+    reranker_model : str, optional
+        Legacy single-reranker override; takes precedence over ``reranker_models``.
     show_progress : bool
-        Whether to show progress bars. Default: True
+        Show progress bars. Default: True.
     cache_dir : str, optional
-        Directory to download/cache models. Defaults to HuggingFace cache (~/.cache/huggingface).
+        Directory to download/cache models. Defaults to the HuggingFace cache.
     batch_size : int
-        Number of corpus texts to embed at once. Lower values reduce peak memory
-        for large corpora. Default: 50,000.
+        Number of corpus texts to embed at once. Default: 50,000.
+    device : str, optional
+        Device for inference ("cuda" or "cpu"). Defaults to GPU if available.
 
     Returns
     -------
     pd.DataFrame
-        DataFrame with columns:
-        - query_idx: Index in the query DataFrame
-        - query_text: The query text (concatenated if multiple columns)
-        - match_idx: Index in the corpus DataFrame
-        - match_text: The matched text (concatenated if multiple columns)
-        - score: Confidence score
+        Columns: ``query_idx``, ``query_text``, ``match_idx``, ``match_text``,
+        ``score`` (the fused confidence; higher is better).
 
     Example
     -------
     >>> import pandas as pd
     >>> from zeroshot_linkage import link
-    >>>
-    >>> # Single column
     >>> queries = pd.DataFrame({"name": ["John Smith", "Jane Doe"]})
     >>> corpus = pd.DataFrame({"name": ["J. Smith", "Jane M. Doe", "Bob Wilson"]})
     >>> results = link(queries, corpus, column_query="name")
-    >>>
-    >>> # Multiple columns (concatenated automatically)
-    >>> queries = pd.DataFrame({"city": ["OKC", "SF"], "state": ["OK", "CA"]})
-    >>> corpus = pd.DataFrame({"city": ["Oklahoma City", "San Francisco"], "state": ["OK", "CA"]})
-    >>> results = link(queries, corpus, columns_query=["city", "state"])
     """
     if column_query is not None and columns_query is not None:
         raise ValueError("Specify either column_query or columns_query, not both.")
     if column_query is None and columns_query is None:
         raise ValueError("Specify either column_query or columns_query.")
 
-    # Prepare data
     queries = queries.reset_index(drop=True)
     corpus = corpus.reset_index(drop=True)
 
@@ -114,55 +141,23 @@ def link(
         query_texts = queries[column_query].astype(str).tolist()
         corpus_texts = corpus[column_corpus].astype(str).tolist()
 
-    # Build retrieval index
-    retriever = EnsembleRetriever(
-        embedding_model=embedding_model,
-        top_k=retrieval_top_k,
-        cache_dir=cache_dir,
+    matcher = _build_matcher(
+        embedding_model, reranker_models, reranker_model,
+        pool_size, retrieval_top_k, device, cache_dir,
     )
-    retriever.index(corpus_texts, show_progress=show_progress, batch_size=batch_size)
+    matches = matcher.match(
+        query_texts, corpus_texts, show_progress=show_progress, batch_size=batch_size
+    )
 
-    # Initialize reranker
-    reranker = CrossEncoderReranker(model_name=reranker_model, cache_dir=cache_dir)
-
-    # Link each query
     results = []
-    iterator = enumerate(query_texts)
-    if show_progress:
-        iterator = tqdm(list(iterator), desc="Linking records")
-
-    for query_idx, query_text in iterator:
-        # Retrieve candidates
-        candidate_indices = retriever.retrieve(query_text)
-        candidate_texts = [corpus_texts[i] for i in candidate_indices]
-
-        if not candidate_texts:
-            results.append({
-                "query_idx": query_idx,
-                "query_text": query_text,
-                "match_idx": None,
-                "match_text": None,
-                "score": None,
-            })
-            continue
-
-        # Rerank candidates
-        scores = reranker.score(query_text, candidate_texts)
-
-        # Return best match
-        best_local_idx = int(np.argmax(scores))
-        best_score = float(scores[best_local_idx])
-        match_idx = candidate_indices[best_local_idx]
-        match_text = candidate_texts[best_local_idx]
-
+    for query_idx, (match_idx, score) in enumerate(matches):
         results.append({
             "query_idx": query_idx,
-            "query_text": query_text,
+            "query_text": query_texts[query_idx],
             "match_idx": match_idx,
-            "match_text": match_text,
-            "score": best_score,
+            "match_text": corpus_texts[match_idx] if match_idx is not None else None,
+            "score": score,
         })
-
     return pd.DataFrame(results)
 
 
@@ -173,209 +168,116 @@ def link_blocked(
     detail_query: str,
     blocking_corpus: Optional[str] = None,
     detail_corpus: Optional[str] = None,
-    retrieval_top_k: int = 20,
-    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
-    reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
+    pool_size: int = 50,
+    retrieval_top_k: Optional[int] = None,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    reranker_models: Sequence[str] = DEFAULT_RERANKER_MODELS,
+    reranker_model: Optional[str] = None,
     show_progress: bool = True,
     cache_dir: Optional[str] = None,
     batch_size: int = 50000,
+    device: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Link records using hierarchical blocking - match high-level groups first,
-    then match details within those groups.
+    Link records hierarchically: match a coarse block, then a detail within it.
 
-    Example: Match states first, then match counties within matched states.
+    Example: match states first, then match counties only within the matched
+    state. Both stages use the same four-expert agreement-fusion core.
 
     Parameters
     ----------
-    queries : pd.DataFrame
-        The dataset to find matches for.
-    corpus : pd.DataFrame
-        The reference dataset to match against.
-    blocking_query : str
-        Column in queries for blocking (e.g., "state").
-    detail_query : str
-        Column in queries for detail matching (e.g., "county").
-    blocking_corpus : str, optional
-        Column in corpus for blocking. Defaults to blocking_query.
-    detail_corpus : str, optional
-        Column in corpus for detail matching. Defaults to detail_query.
-    retrieval_top_k : int
-        Number of candidates to retrieve per query. Default: 20
-    embedding_model : str
-        Model for dense retrieval. Default: "Qwen/Qwen3-Embedding-0.6B"
-    reranker_model : str
-        Model for reranking. Default: "jinaai/jina-reranker-v2-base-multilingual"
-    show_progress : bool
-        Whether to show progress bars. Default: True
-    cache_dir : str, optional
-        Directory to download/cache models.
-    batch_size : int
-        Number of corpus texts to embed at once. Lower values reduce peak memory
-        for large corpora. Default: 50,000.
+    queries, corpus : pd.DataFrame
+        Query and reference datasets.
+    blocking_query, detail_query : str
+        Query columns for the coarse block (e.g. "state") and the detail (e.g.
+        "county").
+    blocking_corpus, detail_corpus : str, optional
+        Corpus columns; default to the query column names.
+    pool_size, retrieval_top_k, embedding_model, reranker_models, reranker_model,
+    show_progress, cache_dir, batch_size, device
+        As in :func:`link`.
 
     Returns
     -------
     pd.DataFrame
-        DataFrame with columns:
-        - query_idx: Index in the query DataFrame
-        - query_block: The query blocking value (e.g., state name)
-        - query_detail: The query detail value (e.g., county name)
-        - match_idx: Index in the corpus DataFrame
-        - match_block: The matched blocking value
-        - match_detail: The matched detail value
-        - block_score: Confidence score for the block match
-        - detail_score: Confidence score for the detail match
-
-    Example
-    -------
-    >>> queries = pd.DataFrame({
-    ...     "state": ["Kalifornia", "Texass"],
-    ...     "county": ["Los Angelos", "Harris Co"]
-    ... })
-    >>> corpus = pd.DataFrame({
-    ...     "state": ["California", "California", "Texas", "Texas"],
-    ...     "county": ["Los Angeles", "San Francisco", "Harris", "Dallas"]
-    ... })
-    >>> results = link_blocked(
-    ...     queries, corpus,
-    ...     blocking_query="state", detail_query="county"
-    ... )
+        Columns: ``query_idx``, ``query_block``, ``query_detail``, ``match_idx``,
+        ``match_block``, ``match_detail``, ``block_score``, ``detail_score``.
     """
     if blocking_corpus is None:
         blocking_corpus = blocking_query
     if detail_corpus is None:
         detail_corpus = detail_query
 
-    # Prepare data
     queries = queries.reset_index(drop=True)
     corpus = corpus.reset_index(drop=True)
 
-    # Get corpus block values and detail texts
     corpus_blocks = corpus[blocking_corpus].astype(str).tolist()
     corpus_details = corpus[detail_corpus].astype(str).tolist()
 
-    # Step 1: Match blocking values (e.g., states)
-    unique_query_blocks = queries[blocking_query].astype(str).unique().tolist()
-    unique_corpus_blocks = list(set(corpus_blocks))
+    matcher = _build_matcher(
+        embedding_model, reranker_models, reranker_model,
+        pool_size, retrieval_top_k, device, cache_dir,
+    )
 
+    # Stage 1: match each unique query block to the unique corpus blocks.
+    unique_query_blocks = queries[blocking_query].astype(str).unique().tolist()
+    unique_corpus_blocks = list(dict.fromkeys(corpus_blocks))
     if show_progress:
         print(f"Matching {len(unique_query_blocks)} unique blocking values...")
-
-    # Build retriever for blocking (small - just unique block names)
-    block_retriever = EnsembleRetriever(
-        embedding_model=embedding_model,
-        top_k=min(retrieval_top_k, len(unique_corpus_blocks)),
-        cache_dir=cache_dir,
+    block_matches = matcher.match(
+        unique_query_blocks, unique_corpus_blocks, show_progress=show_progress
     )
-    block_retriever.index(unique_corpus_blocks, show_progress=show_progress)
+    block_mapping = {}
+    for qb, (m_idx, score) in zip(unique_query_blocks, block_matches):
+        block_mapping[qb] = (
+            unique_corpus_blocks[m_idx] if m_idx is not None else None,
+            score,
+        )
 
-    # Initialize reranker (shared for both stages)
-    reranker = CrossEncoderReranker(model_name=reranker_model, cache_dir=cache_dir)
-
-    # Match each unique query block to corpus blocks
-    block_mapping = {}  # query_block -> (corpus_block, score)
-    for query_block in unique_query_blocks:
-        candidate_indices = block_retriever.retrieve(query_block)
-        candidate_blocks = [unique_corpus_blocks[i] for i in candidate_indices]
-
-        if not candidate_blocks:
-            block_mapping[query_block] = (None, None)
-            continue
-
-        scores = reranker.score(query_block, candidate_blocks)
-        best_idx = int(np.argmax(scores))
-        block_mapping[query_block] = (candidate_blocks[best_idx], float(scores[best_idx]))
-
-    # Step 2: Build ONE retriever for entire detail corpus (OPTIMIZED)
-    if show_progress:
-        print(f"Building detail index for {len(corpus_details)} records...")
-
-    detail_retriever = EnsembleRetriever(
-        embedding_model=embedding_model,
-        top_k=retrieval_top_k * 5,  # Retrieve more, filter by block later
-        cache_dir=cache_dir,
-    )
-    detail_retriever.index(corpus_details, show_progress=show_progress, batch_size=batch_size)
-
-    # Pre-compute block membership for fast filtering
-    block_to_indices = {}
+    # Pre-index corpus rows by block for the detail stage.
+    block_to_rows = {}
     for idx, block in enumerate(corpus_blocks):
-        if block not in block_to_indices:
-            block_to_indices[block] = set()
-        block_to_indices[block].add(idx)
+        block_to_rows.setdefault(block, []).append(idx)
 
-    # Match each query
+    # Stage 2: detail matching within each matched block, grouped so a block's
+    # corpus subset is embedded once and its queries are matched together.
+    query_blocks = queries[blocking_query].astype(str).tolist()
+    query_details = queries[detail_query].astype(str).tolist()
+
+    detail_idx = [None] * len(queries)
+    detail_score = [None] * len(queries)
+
+    grouped = {}  # matched_corpus_block -> list of query row indices
+    for q_idx, qb in enumerate(query_blocks):
+        matched_block, _ = block_mapping.get(qb, (None, None))
+        if matched_block is not None and matched_block in block_to_rows:
+            grouped.setdefault(matched_block, []).append(q_idx)
+
     if show_progress:
-        print("Linking records...")
+        print(f"Matching details within {len(grouped)} blocks...")
+    for matched_block, q_indices in grouped.items():
+        rows = block_to_rows[matched_block]
+        sub_corpus = [corpus_details[r] for r in rows]
+        sub_queries = [query_details[q] for q in q_indices]
+        sub_matches = matcher.match(sub_queries, sub_corpus, show_progress=False)
+        for q_idx, (local_idx, score) in zip(q_indices, sub_matches):
+            if local_idx is not None:
+                detail_idx[q_idx] = rows[local_idx]
+                detail_score[q_idx] = score
 
     results = []
-    iterator = queries.iterrows()
-    if show_progress:
-        iterator = tqdm(list(iterator), desc="Linking records")
-
-    for query_idx, row in iterator:
-        query_block = str(row[blocking_query])
-        query_detail = str(row[detail_query])
-
-        matched_block, block_score = block_mapping.get(query_block, (None, None))
-
-        if matched_block is None or matched_block not in block_to_indices:
-            results.append({
-                "query_idx": query_idx,
-                "query_block": query_block,
-                "query_detail": query_detail,
-                "match_idx": None,
-                "match_block": matched_block,
-                "match_detail": None,
-                "block_score": block_score,
-                "detail_score": None,
-            })
-            continue
-
-        # Retrieve candidates from full corpus, then filter by block
-        all_candidate_indices = detail_retriever.retrieve(query_detail)
-        valid_indices = block_to_indices[matched_block]
-
-        # Filter to only candidates in the matched block
-        candidate_indices = [i for i in all_candidate_indices if i in valid_indices]
-
-        if not candidate_indices:
-            # Fallback: if no candidates after filtering, try all in block
-            candidate_indices = list(valid_indices)[:retrieval_top_k]
-
-        candidate_texts = [corpus_details[i] for i in candidate_indices]
-
-        if not candidate_texts:
-            results.append({
-                "query_idx": query_idx,
-                "query_block": query_block,
-                "query_detail": query_detail,
-                "match_idx": None,
-                "match_block": matched_block,
-                "match_detail": None,
-                "block_score": block_score,
-                "detail_score": None,
-            })
-            continue
-
-        # Rerank detail candidates
-        detail_scores = reranker.score(query_detail, candidate_texts)
-        detail_scores = np.atleast_1d(detail_scores)  # Handle scalar case
-        best_local_idx = int(np.argmax(detail_scores))
-        best_detail_score = float(detail_scores[best_local_idx])
-        match_idx = candidate_indices[best_local_idx]
-        match_detail = candidate_texts[best_local_idx]
-
+    for q_idx in range(len(queries)):
+        qb = query_blocks[q_idx]
+        matched_block, block_score = block_mapping.get(qb, (None, None))
+        m_idx = detail_idx[q_idx]
         results.append({
-            "query_idx": query_idx,
-            "query_block": query_block,
-            "query_detail": query_detail,
-            "match_idx": match_idx,
+            "query_idx": q_idx,
+            "query_block": qb,
+            "query_detail": query_details[q_idx],
+            "match_idx": m_idx,
             "match_block": matched_block,
-            "match_detail": match_detail,
+            "match_detail": corpus_details[m_idx] if m_idx is not None else None,
             "block_score": block_score,
-            "detail_score": best_detail_score,
+            "detail_score": detail_score[q_idx],
         })
-
     return pd.DataFrame(results)

@@ -38,7 +38,7 @@ print("\nCorpus:")
 print(corpus)
 
 # Link them
-results = link(queries, corpus, column_query="city", threshold=0.3)
+results = link(queries, corpus, column_query="city")
 
 print("\nResults:")
 print(results.to_string(index=False))

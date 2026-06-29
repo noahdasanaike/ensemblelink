@@ -1,55 +1,82 @@
 """
-Ensemble retrieval combining dense (FAISS) and sparse (TF-IDF) methods.
+Ensemble candidate retrieval combining dense and sparse methods.
+
+Dense retrieval uses a sentence-transformer embedding (harrier by default) and
+sparse retrieval uses character-n-gram TF-IDF. The two are complementary: the
+embedding captures semantic and transliteration variation while the n-grams
+capture surface-form overlap (shared substrings, abbreviations, typos). The
+candidate pool for a query is the union of the top matches from each method.
+
+Dense scores are computed by a direct inner product against the (normalized)
+corpus embedding matrix rather than an approximate index, because the fusion
+stage downstream needs the full dense score for every pooled candidate anyway.
 """
 
 import numpy as np
 from typing import List, Optional
 
 
+def _topk_indices(scores: np.ndarray, k: int) -> np.ndarray:
+    """Indices of the ``k`` largest scores, in descending order."""
+    n = scores.shape[0]
+    k = min(k, n)
+    if k <= 0:
+        return np.array([], dtype=int)
+    if k < n:
+        part = np.argpartition(-scores, k - 1)[:k]
+        return part[np.argsort(-scores[part])]
+    return np.argsort(-scores)
+
+
 class EnsembleRetriever:
     """
-    Ensemble retriever combining dense and sparse retrieval.
-
-    Uses FAISS for dense retrieval with sentence embeddings and
-    TF-IDF with character n-grams for sparse retrieval. The final
-    candidates are the union of both methods.
+    Ensemble retriever combining dense embeddings and sparse TF-IDF.
 
     Parameters
     ----------
     embedding_model : str
         Sentence-transformer model name for dense embeddings.
-    top_k : int
-        Number of candidates to retrieve from each method.
+    pool_size : int
+        Number of candidates to retrieve from each method (their union forms the
+        pool). ``top_k`` is accepted as an alias for backward compatibility.
+    ngram_range : tuple
+        Character n-gram range for the sparse TF-IDF index.
+    max_features : int
+        Maximum TF-IDF vocabulary size.
     device : str, optional
-        Device for embedding model ("cuda" or "cpu").
+        Device for the embedding model ("cuda" or "cpu").
     cache_dir : str, optional
-        Directory to download/cache models. Defaults to HuggingFace cache.
+        Directory to download/cache models. Defaults to the HuggingFace cache.
     """
 
     def __init__(
         self,
-        embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
-        top_k: int = 20,
+        embedding_model: str = "microsoft/harrier-oss-v1-0.6b",
+        pool_size: Optional[int] = None,
+        top_k: Optional[int] = None,
         ngram_range: tuple = (2, 4),
         max_features: int = 50000,
         device: Optional[str] = None,
         cache_dir: Optional[str] = None,
     ):
         self.embedding_model_name = embedding_model
-        self.top_k = top_k
+        # pool_size is the primary name; top_k kept as an alias.
+        self.pool_size = pool_size if pool_size is not None else (top_k if top_k is not None else 50)
+        self.top_k = self.pool_size
         self.ngram_range = ngram_range
         self.max_features = max_features
         self.device = device
         self.cache_dir = cache_dir
 
         self._embed_model = None
-        self._faiss_index = None
         self._tfidf_vectorizer = None
         self._tfidf_matrix = None
+        self._tfidf_matrix_T = None
+        self.corpus_embeddings: Optional[np.ndarray] = None
         self._corpus_texts: List[str] = []
 
     def _load_embedding_model(self):
-        """Lazy load the embedding model."""
+        """Lazy-load the embedding model."""
         if self._embed_model is None:
             from sentence_transformers import SentenceTransformer
 
@@ -57,7 +84,44 @@ class EnsembleRetriever:
                 self.embedding_model_name,
                 device=self.device,
                 cache_folder=self.cache_dir,
+                trust_remote_code=True,
             )
+
+    def encode(
+        self,
+        texts: List[str],
+        show_progress: bool = True,
+        batch_size: int = 50000,
+    ) -> np.ndarray:
+        """Encode texts into L2-normalized float32 embeddings.
+
+        Encoding is chunked so that large corpora do not have to be embedded in
+        a single forward pass.
+        """
+        self._load_embedding_model()
+        if len(texts) <= batch_size:
+            return self._embed_model.encode(
+                texts,
+                normalize_embeddings=True,
+                show_progress_bar=show_progress,
+                convert_to_numpy=True,
+            ).astype(np.float32)
+
+        first = self._embed_model.encode(
+            texts[:1], normalize_embeddings=True, convert_to_numpy=True
+        )
+        dim = first.shape[1]
+        out = np.empty((len(texts), dim), dtype=np.float32)
+        out[0] = first[0]
+        for start in range(1, len(texts), batch_size):
+            end = min(start + batch_size, len(texts))
+            out[start:end] = self._embed_model.encode(
+                texts[start:end],
+                normalize_embeddings=True,
+                show_progress_bar=show_progress,
+                convert_to_numpy=True,
+            ).astype(np.float32)
+        return out
 
     def index(
         self,
@@ -65,109 +129,104 @@ class EnsembleRetriever:
         show_progress: bool = True,
         batch_size: int = 50000,
     ) -> None:
-        """
-        Build retrieval indices for the corpus.
+        """Build the dense and sparse indices for the corpus.
 
         Parameters
         ----------
         texts : List[str]
-            List of corpus texts to index.
+            Corpus texts to index.
         show_progress : bool
-            Whether to show progress bar for embedding generation.
+            Show a progress bar while embedding.
         batch_size : int
-            Number of texts to embed at once. Lower values reduce peak memory
-            usage for large corpora. Default 50,000 works well up to ~1M records
-            on a 16 GB GPU; reduce to 10,000-20,000 for CPU-only or constrained
-            environments.
+            Number of texts to embed at once. Lower values reduce peak memory on
+            large corpora. Default 50,000 works well up to ~1M records on a
+            16 GB GPU; reduce to 10,000-20,000 for CPU-only environments.
         """
-        import faiss
         from sklearn.feature_extraction.text import TfidfVectorizer
 
-        self._corpus_texts = texts
+        self._corpus_texts = list(texts)
+        self.corpus_embeddings = self.encode(
+            self._corpus_texts, show_progress=show_progress, batch_size=batch_size
+        )
 
-        # Build dense index
-        self._load_embedding_model()
-
-        if len(texts) <= batch_size:
-            embeddings = self._embed_model.encode(
-                texts,
-                normalize_embeddings=True,
-                show_progress_bar=show_progress,
-                convert_to_numpy=True,
-            ).astype(np.float32)
-        else:
-            # Batched encoding for large corpora to avoid OOM
-            first_batch = self._embed_model.encode(
-                texts[:1],
-                normalize_embeddings=True,
-                convert_to_numpy=True,
-            )
-            dim = first_batch.shape[1]
-            embeddings = np.empty((len(texts), dim), dtype=np.float32)
-            embeddings[0] = first_batch[0]
-
-            for start in range(1, len(texts), batch_size):
-                end = min(start + batch_size, len(texts))
-                batch_embs = self._embed_model.encode(
-                    texts[start:end],
-                    normalize_embeddings=True,
-                    show_progress_bar=show_progress,
-                    convert_to_numpy=True,
-                ).astype(np.float32)
-                embeddings[start:end] = batch_embs
-
-        dim = embeddings.shape[1]
-        self._faiss_index = faiss.IndexFlatIP(dim)
-        self._faiss_index.add(embeddings)
-
-        # Build sparse index
         self._tfidf_vectorizer = TfidfVectorizer(
             analyzer="char",
             ngram_range=self.ngram_range,
             lowercase=True,
             max_features=self.max_features,
         )
-        self._tfidf_matrix = self._tfidf_vectorizer.fit_transform(texts)
+        self._tfidf_matrix = self._tfidf_vectorizer.fit_transform(self._corpus_texts)
+        self._tfidf_matrix_T = self._tfidf_matrix.T.tocsr()
 
-    def retrieve(self, query: str) -> List[int]:
+    def _dense_scores(self, query_emb_row: np.ndarray) -> np.ndarray:
+        """Cosine similarity of one query against every corpus row.
+
+        Embeddings are L2-normalized, so the inner product is the cosine.
         """
-        Retrieve candidate indices for a query.
+        return self.corpus_embeddings @ query_emb_row
+
+    def _sparse_scores(self, query_sparse_row) -> np.ndarray:
+        """TF-IDF cosine of one query against every corpus row."""
+        return (query_sparse_row @ self._tfidf_matrix_T).toarray().ravel()
+
+    def pool(self, query_texts: List[str], show_progress: bool = True):
+        """Retrieve the candidate pool and pooled scores for many queries.
 
         Parameters
         ----------
-        query : str
-            The query text.
+        query_texts : List[str]
+            Queries to retrieve candidates for.
 
         Returns
         -------
-        List[int]
-            Indices of candidate matches in the corpus.
+        pools : list of list of int
+            Candidate corpus indices per query (union of dense and sparse top-k).
+        dense_pool : list of np.ndarray
+            Dense cosine of each pooled candidate, per query.
+        sparse_pool : list of np.ndarray
+            Sparse TF-IDF cosine of each pooled candidate, per query.
+        query_emb : np.ndarray
+            The query embeddings (reused downstream for the CSLS correction).
         """
-        if self._faiss_index is None:
-            raise ValueError("Must call index() before retrieve()")
+        if self.corpus_embeddings is None:
+            raise ValueError("Must call index() before pool().")
 
-        # Dense retrieval
-        query_emb = self._embed_model.encode(
-            [query],
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-        ).astype(np.float32)
+        query_emb = self.encode(query_texts, show_progress=show_progress)
+        query_sparse = self._tfidf_vectorizer.transform(query_texts)
 
-        _, dense_indices = self._faiss_index.search(query_emb, self.top_k)
-        dense_set = set(dense_indices[0].tolist())
+        pools, dense_pool, sparse_pool = [], [], []
+        iterator = range(len(query_texts))
+        if show_progress:
+            from tqdm import tqdm
 
-        # Sparse retrieval
-        from sklearn.metrics.pairwise import cosine_similarity
+            iterator = tqdm(iterator, desc="Pooling candidates")
 
-        query_vec = self._tfidf_vectorizer.transform([query])
-        sparse_scores = cosine_similarity(query_vec, self._tfidf_matrix)[0]
-        sparse_indices = np.argsort(-sparse_scores)[: self.top_k]
-        sparse_set = set(sparse_indices.tolist())
+        for qi in iterator:
+            d = self._dense_scores(query_emb[qi])
+            s = self._sparse_scores(query_sparse[qi])
+            dense_top = _topk_indices(d, self.pool_size)
+            sparse_top = _topk_indices(s, self.pool_size)
+            cand = [int(c) for c in dict.fromkeys(list(dense_top) + list(sparse_top))]
+            pools.append(cand)
+            dense_pool.append(d[cand])
+            sparse_pool.append(s[cand])
 
-        # Ensemble: union of both
-        combined = list(dense_set | sparse_set)
+        return pools, dense_pool, sparse_pool, query_emb
 
-        # Remove invalid indices (e.g., -1 from FAISS if corpus is small)
-        combined = [i for i in combined if 0 <= i < len(self._corpus_texts)]
+    def retrieve(self, query: str) -> List[int]:
+        """Retrieve candidate indices for a single query (union of dense+sparse).
 
-        return combined
+        Kept for lighter, single-reranker use cases (see :mod:`occupations`); the
+        full fusion path uses :meth:`pool` instead.
+        """
+        if self.corpus_embeddings is None:
+            raise ValueError("Must call index() before retrieve().")
+
+        query_emb = self.encode([query], show_progress=False)[0]
+        query_sparse = self._tfidf_vectorizer.transform([query])
+        d = self._dense_scores(query_emb)
+        s = self._sparse_scores(query_sparse[0])
+        dense_top = _topk_indices(d, self.pool_size)
+        sparse_top = _topk_indices(s, self.pool_size)
+        combined = list(dict.fromkeys(list(dense_top) + list(sparse_top)))
+        return [int(i) for i in combined if 0 <= i < len(self._corpus_texts)]

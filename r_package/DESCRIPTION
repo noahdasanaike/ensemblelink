@@ -1,12 +1,14 @@
 Package: ensemblelink
 Title: EnsembleLink: Accurate Record Linkage Without Training Data
-Version: 0.1.0
+Version: 0.2.0
 Authors@R:
     person("Noah", "Dasanaike", email = "noahdasanaike@g.harvard.edu", role = c("aut", "cre"))
-Description: Performs fuzzy record linkage using ensemble retrieval (dense embeddings +
-    sparse TF-IDF) combined with cross-encoder reranking. Requires no labeled training
-    data and outperforms supervised methods on standard benchmarks. Uses Python backend
-    via reticulate.
+Description: Performs fuzzy record linkage using four-expert agreement fusion. Candidates
+    are retrieved by an embedding-plus-TF-IDF ensemble and scored by a two-model
+    cross-encoder reranker ensemble, a CSLS-corrected dense cosine, a sparse TF-IDF
+    cosine, and Jaro-Winkler similarity, then fused without labels. Requires no labeled
+    training data and outperforms supervised methods on standard benchmarks. Uses a
+    Python backend via reticulate.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -16,4 +18,4 @@ Imports:
 Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
-SystemRequirements: Python (>= 3.9), PyTorch, sentence-transformers, faiss-cpu or faiss-gpu
+SystemRequirements: Python (>= 3.9), PyTorch, sentence-transformers (>= 2.7), rapidfuzz

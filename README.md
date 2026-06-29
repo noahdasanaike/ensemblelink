@@ -4,6 +4,17 @@ Accurate record linkage without training data using pre-trained language models.
 
 **Paper**: [EnsembleLink: Accurate Record Linkage Without Training Data](https://www.dropbox.com/scl/fi/tzvpp2lurejtbw6t4skds/ensemble_linkage.pdf?rlkey=00x7nxbto7d8r44m8igi4ldd1&e=2&st=7zpr8z8k&dl=0)
 
+## How It Works
+
+For each query, EnsembleLink retrieves a candidate pool (the union of the top dense-embedding and top character-n-gram TF-IDF matches) and scores every candidate with four complementary experts:
+
+1. **Reranker ensemble** — two cross-encoders (Jina v2 and BGE v2-m3) read the query and candidate together; their per-pool z-scores are summed.
+2. **CSLS-corrected dense cosine** — embedding cosine with a hubness penalty (`2 * cosine - hubness`) so that corpus points near everything are discounted.
+3. **Sparse TF-IDF cosine** — character-n-gram overlap, which catches abbreviations and typos.
+4. **Jaro-Winkler** — a classical lexical edit similarity.
+
+Each expert is z-normalized within the candidate pool, and the experts are fused **without any labeled data**: every expert votes for its top candidate per query, and each expert's weight is the squared fraction of queries on which it agrees with the consensus. The weighted sum of the experts decides the match. Experts that track the crowd are trusted; experts that disagree are discounted.
+
 ## Table of Contents
 
 1. [R Package](#r-package)
@@ -90,9 +101,10 @@ queries_df$match_score <- results$score
 results <- ensemble_link(
   queries,
   corpus,
-  embedding_model = "Qwen/Qwen3-Embedding-0.6B",
+  embedding_model = "microsoft/harrier-oss-v1-0.6b",
   reranker_model = "jinaai/jina-reranker-v2-base-multilingual",
-  top_k = 30,
+  reranker_model_2 = "BAAI/bge-reranker-v2-m3",  # set NULL for a single reranker
+  pool_size = 50,
   return_scores = TRUE,
   show_progress = TRUE,
   device = "auto"  # "cuda", "cpu", or "auto"
@@ -165,9 +177,6 @@ cd ensemblelink
 # For CPU: pip install torch --index-url https://download.pytorch.org/whl/cpu
 
 pip install -e .
-
-# For GPU FAISS (optional, faster):
-pip install faiss-gpu
 ```
 
 #### Verify installation
@@ -176,7 +185,7 @@ pip install faiss-gpu
 python -c "from zeroshot_linkage import link; print('Installation successful!')"
 ```
 
-The first run will download the embedding and reranker models (~2GB total). This only happens once.
+The first run will download the embedding model and the two rerankers (~3GB total). This only happens once.
 
 ### Quick Start
 
@@ -217,7 +226,7 @@ The function returns a pandas DataFrame with these columns:
 | `query_text` | str | The text that was matched |
 | `match_idx` | int | Row index in the corpus DataFrame |
 | `match_text` | str | The matched text |
-| `score` | float | Reranker score (higher is better) |
+| `score` | float | Fused match score (higher is better) |
 
 ### Merging Results Back
 
@@ -297,24 +306,27 @@ results = link(
 
 | Model | Size | Speed | Quality |
 |-------|------|-------|---------|
-| `Qwen/Qwen3-Embedding-0.6B` | 600MB | Medium | Best |
+| `microsoft/harrier-oss-v1-0.6b` | 600MB | Medium | Best (default) |
+| `Qwen/Qwen3-Embedding-0.6B` | 600MB | Medium | Strong |
 | `sentence-transformers/all-mpnet-base-v2` | 420MB | Medium | Good |
 | `sentence-transformers/all-MiniLM-L6-v2` | 80MB | Fast | Moderate |
 
 ### Reranker Models
 
+The reranker expert is an **ensemble of two** cross-encoders by default; their z-scored ranks are summed. Pass a single `reranker_model` (Python) or set `reranker_model_2 = NULL` (R) to use just one.
+
 | Model | Size | Speed | Notes |
 |-------|------|-------|-------|
-| `jinaai/jina-reranker-v2-base-multilingual` | 278MB | Medium | Best (default) |
-| `jinaai/jina-reranker-v3` | 560MB | Medium | Multilingual support |
-| `cross-encoder/ms-marco-MiniLM-L-6-v2` | 80MB | Fast | English only |
+| `jinaai/jina-reranker-v2-base-multilingual` | 278MB | Medium | Default reranker 1 |
+| `BAAI/bge-reranker-v2-m3` | 568MB | Medium | Default reranker 2 |
+| `cross-encoder/ms-marco-MiniLM-L-6-v2` | 80MB | Fast | English only, lighter |
 
 ### Retrieval Candidates
 
-The `top_k` (R) or `retrieval_top_k` (Python) parameter controls how many candidates are retrieved before reranking. Default is 20-30.
+The `pool_size` parameter controls how many candidates are retrieved from **each** of dense and sparse retrieval; the pool is their union. Default is 50.
 
-- **Higher values** (50+): Better recall, slower
-- **Lower values** (10): Faster, may miss matches
+- **Higher values** (100+): Better recall, slower
+- **Lower values** (20): Faster, may miss matches
 
 ---
 

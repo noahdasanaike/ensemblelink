@@ -87,7 +87,7 @@ class EnsembleOcc:
 
     def __init__(
         self,
-        embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
+        embedding_model: str = "microsoft/harrier-oss-v1-0.6b",
         reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
         retrieval_top_k: int = 30,
         ngram_range: tuple = (2, 4),
@@ -227,7 +227,7 @@ def deduplicate_corpus(
     code_cols: Sequence[str] = ("hisco_code", "isco_code", "canonical_code"),
     score_threshold: float = 0.95,
     retrieval_top_k: int = 30,
-    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B",
+    embedding_model: str = "microsoft/harrier-oss-v1-0.6b",
     reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual",
     show_progress: bool = True,
     cache_dir: Optional[str] = None,
