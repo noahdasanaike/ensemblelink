@@ -2,7 +2,7 @@
 
 Accurate record linkage without training data using pre-trained language models. No labeled examples or API keys required. Bug reports welcome.
 
-**Paper**: [EnsembleLink: Accurate Record Linkage Without Training Data](https://www.dropbox.com/scl/fi/tzvpp2lurejtbw6t4skds/ensemble_linkage.pdf?rlkey=00x7nxbto7d8r44m8igi4ldd1&e=2&st=7zpr8z8k&dl=0)
+**Paper**: [Pre-Trained Language Models as Zero-Shot Tools for Social Science Research](https://www.dropbox.com/scl/fi/2kx17wvydhr3v8m4u59ek/zeroshot_llms_dasanaike.pdf?rlkey=kybmjjnptca1urqcin06ro349&st=fk6w43uj&e=1&dl=0)
 
 ## How It Works
 
