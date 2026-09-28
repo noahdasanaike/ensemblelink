@@ -27,3 +27,6 @@ Thumbs.db
 
 # Model cache (downloaded on first run)
 .cache/
+
+# Test cache
+.pytest_cache/

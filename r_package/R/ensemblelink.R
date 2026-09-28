@@ -83,7 +83,9 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
     "transformers<5.0.0",
     "sentence-transformers>=2.7.0",
     "scikit-learn",
+    "scipy",
     "rapidfuzz",
+    "Unidecode",
     "tqdm",
     "einops"
   )
@@ -146,18 +148,20 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #' Zero-Shot Record Linkage
 #'
 #' Link records from a query dataset to a reference corpus using four-expert
-#' agreement fusion: candidates are retrieved by an embedding-plus-TF-IDF
-#' ensemble and scored by a two-model reranker ensemble, a CSLS-corrected dense
-#' cosine, a sparse TF-IDF cosine, and Jaro-Winkler similarity, then fused
-#' without labels. Requires no labeled training data.
+#' agreement fusion: candidates are retrieved by exact dense search plus
+#' character TF-IDF and scored by a two-model reranker ensemble (Jina v2 and
+#' BGE v2-m3), a CSLS-corrected dense cosine, a sparse TF-IDF cosine, and
+#' Jaro-Winkler similarity, then fused without labels. Requires no labeled
+#' training data. The R package runs the Python package's code (vendored), so
+#' results are the same as \code{zeroshot_linkage.link} in Python.
 #'
-#' For multi-column matching, concatenate columns with \code{paste()} before
-#' calling this function. Concatenation consistently outperforms blocking-based
-#' approaches across benchmarks (see Dasanaike 2026, Table 3):
+#' For multi-column matching, write each record as \code{field=value} pairs
+#' joined by \code{" | "} (omit missing fields) and set \code{multifield = TRUE},
+#' which adds the paper's embedding instruction for multi-field records:
 #' \preformatted{
-#' queries <- paste(df$city, df$state, sep = " | ")
-#' corpus  <- paste(ref$city, ref$state, sep = " | ")
-#' results <- ensemble_link(queries, corpus)
+#' queries <- paste0("city=", df$city, " | state=", df$state)
+#' corpus  <- paste0("city=", ref$city, " | state=", ref$state)
+#' results <- ensemble_link(queries, corpus, multifield = TRUE)
 #' }
 #'
 #' @param queries Character vector of query strings to match
@@ -166,18 +170,46 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #'   Default: "microsoft/harrier-oss-v1-0.6b"
 #' @param reranker_model Name of the first cross-encoder reranker.
 #'   Default: "jinaai/jina-reranker-v2-base-multilingual"
-#' @param reranker_model_2 Name of the second cross-encoder reranker, or NULL for
-#'   a single reranker. Default: "BAAI/bge-reranker-v2-m3"
+#' @param reranker_model_2 Name of the second cross-encoder reranker, or NULL to
+#'   drop it. Default: "BAAI/bge-reranker-v2-m3"
+#' @param reranker_model_3 Optional third reranker, or NULL (default). The
+#'   default Jina v2 reranker is licensed CC-BY-NC-4.0 (non-commercial); for
+#'   commercial use set \code{reranker_model = NULL} and
+#'   \code{reranker_model_3 = "zeroentropy/zerank-2-reranker"} (BGE v2-m3 and
+#'   zerank-2, both Apache-2.0), a set that scored below the default in the
+#'   paper's development tests.
 #' @param pool_size Number of candidates retrieved from each of dense and sparse
-#'   retrieval (their union forms the pool). Default: 50
-#' @param return_scores Logical; if TRUE, return fused match scores. Default: FALSE
+#'   retrieval (their union forms the pool). Default: 30
+#' @param multifield Logical; TRUE when records are several \code{field=value}
+#'   pairs, which adds the embedding instruction for multi-field records.
+#'   Default: FALSE
+#' @param return_scores Logical; if TRUE, return the confidence and its two
+#'   components. Default: FALSE
 #' @param show_progress Logical; show progress bar. Default: TRUE
 #' @param device Device for inference: "cuda", "cpu", or "auto". Default: "auto"
+#' @param exact Logical. TRUE (default): the models see the inputs and batches of
+#'   the paper's benchmark, whose results the package reproduces. FALSE: each
+#'   distinct query, corpus record and (query, candidate) pair is scored once, in
+#'   length-sorted batches; faster, above all with duplicated records, with
+#'   scores that differ at the noise level of bfloat16 GPU inference.
+#' @param index_cache Directory for an on-disk cache of the corpus index
+#'   (embeddings, TF-IDF matrix, vectorizer), or NULL (default) for none. A later
+#'   call with the same corpus, model and settings loads the index instead of
+#'   re-embedding the corpus; results are identical. Use only a directory you trust
+#'   (the vectorizer is stored with Python's pickle).
 #'
 #' @return A data frame with columns:
 #'   \item{query}{Original query string}
-#'   \item{match}{Best matching reference string}
-#'   \item{score}{Fused match score (if return_scores = TRUE)}
+#'   \item{match}{Best matching reference string (NA without candidates)}
+#'   \item{match_index}{1-based index of the match in \code{corpus} (if return_scores = TRUE)}
+#'   \item{score}{Confidence (if return_scores = TRUE): the mean of the percentile
+#'     ranks, among the queries of this call, of the fused top-minus-runner-up
+#'     margin and of the match's mean reranker probability; 0 when the top fused
+#'     score is tied. It ranks the queries of one call and is not a probability,
+#'     so a threshold chosen on one call carries over to another only when the
+#'     query sets are alike.}
+#'   \item{margin}{Top minus runner-up fused score (if return_scores = TRUE)}
+#'   \item{reranker_probability}{Mean 0-1 reranker score of the match (if return_scores = TRUE)}
 #'
 #' @export
 #'
@@ -188,10 +220,10 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #' corpus <- c("New York, NY", "Los Angeles, CA", "Chicago, IL", "Houston, TX")
 #' results <- ensemble_link(queries, corpus)
 #'
-#' # Multi-column: concatenate with " | "
-#' queries <- paste(df$city, df$state, sep = " | ")
-#' corpus  <- paste(ref$city, ref$state, sep = " | ")
-#' results <- ensemble_link(queries, corpus)
+#' # Multi-column: field=value pairs joined by " | "
+#' queries <- paste0("city=", df$city, " | state=", df$state)
+#' corpus  <- paste0("city=", ref$city, " | state=", ref$state)
+#' results <- ensemble_link(queries, corpus, multifield = TRUE)
 #'
 #' # With scores
 #' results <- ensemble_link(queries, corpus, return_scores = TRUE)
@@ -209,10 +241,14 @@ ensemble_link <- function(
     embedding_model = "microsoft/harrier-oss-v1-0.6b",
     reranker_model = "jinaai/jina-reranker-v2-base-multilingual",
     reranker_model_2 = "BAAI/bge-reranker-v2-m3",
-    pool_size = 50L,
+    reranker_model_3 = NULL,
+    pool_size = 30L,
+    multifield = FALSE,
     return_scores = FALSE,
     show_progress = TRUE,
-    device = "auto"
+    device = "auto",
+    exact = TRUE,
+    index_cache = NULL
 ) {
   # Validate inputs
   if (!is.character(queries) || length(queries) == 0) {
@@ -230,8 +266,11 @@ ensemble_link <- function(
     embedding_model = embedding_model,
     reranker_model = reranker_model,
     reranker_model_2 = reranker_model_2,
+    reranker_model_3 = reranker_model_3,
     pool_size = as.integer(pool_size),
-    device = device
+    device = device,
+    exact = exact,
+    index_cache = if (is.null(index_cache)) NULL else path.expand(index_cache)
   )
 
   # Index corpus
@@ -240,20 +279,28 @@ ensemble_link <- function(
 
   # Match queries
   if (show_progress) message("Matching ", length(queries), " queries...")
-  results <- matcher$match(queries, return_scores = return_scores, show_progress = show_progress)
+  results <- matcher$match(queries, return_scores = return_scores, show_progress = show_progress,
+                           multifield = multifield)
+
+  as_num <- function(x) vapply(x, function(v) if (is.null(v)) NA_real_ else as.numeric(v), numeric(1), USE.NAMES = FALSE)
+  as_chr <- function(x) vapply(x, function(v) if (is.null(v)) NA_character_ else as.character(v), character(1), USE.NAMES = FALSE)
 
   # Convert to data frame
   if (return_scores) {
     df <- data.frame(
       query = queries,
-      match = results[[1]],
-      score = results[[2]],
+      match = as_chr(results$matches),
+      match_index = vapply(results$indices, function(v) if (is.null(v)) NA_integer_ else as.integer(v) + 1L,
+                           integer(1), USE.NAMES = FALSE),
+      score = as_num(results$score),
+      margin = as_num(results$margin),
+      reranker_probability = as_num(results$reranker_probability),
       stringsAsFactors = FALSE
     )
   } else {
     df <- data.frame(
       query = queries,
-      match = results,
+      match = as_chr(results),
       stringsAsFactors = FALSE
     )
   }
@@ -275,13 +322,20 @@ ensemble_link <- function(
 #'   Default: "microsoft/harrier-oss-v1-0.6b"
 #' @param reranker_model Name of the first cross-encoder reranker.
 #'   Default: "jinaai/jina-reranker-v2-base-multilingual"
-#' @param reranker_model_2 Name of the second cross-encoder reranker, or NULL for
-#'   a single reranker. Default: "BAAI/bge-reranker-v2-m3"
+#' @param reranker_model_2 Name of the second cross-encoder reranker, or NULL to
+#'   drop it. Default: "BAAI/bge-reranker-v2-m3"
+#' @param reranker_model_3 Optional third reranker, or NULL (default); see
+#'   \code{\link{ensemble_link}} for the commercial-use set.
 #' @param pool_size Number of candidates retrieved from each of dense and sparse
-#'   retrieval. Default: 50
-#' @param return_scores Logical; if TRUE, return match scores. Default: FALSE
+#'   retrieval. Default: 30
+#' @param return_scores Logical; if TRUE, return confidences (see
+#'   \code{\link{ensemble_link}}; ranked within the block stage and within each
+#'   matched block's detail call). Default: FALSE
 #' @param show_progress Logical; show progress bar. Default: TRUE
 #' @param device Device for inference: "cuda", "cpu", or "auto". Default: "auto"
+#' @param exact Logical; see \code{\link{ensemble_link}}. Default: TRUE
+#' @param index_cache Directory for the on-disk corpus-index cache, or NULL; see
+#'   \code{\link{ensemble_link}}. Default: NULL
 #'
 #' @return A data frame with columns:
 #'   \item{query_block}{Original query blocking value}
@@ -327,10 +381,13 @@ ensemble_link_blocked <- function(
     embedding_model = "microsoft/harrier-oss-v1-0.6b",
     reranker_model = "jinaai/jina-reranker-v2-base-multilingual",
     reranker_model_2 = "BAAI/bge-reranker-v2-m3",
-    pool_size = 50L,
+    reranker_model_3 = NULL,
+    pool_size = 30L,
     return_scores = FALSE,
     show_progress = TRUE,
-    device = "auto"
+    device = "auto",
+    exact = TRUE,
+    index_cache = NULL
 ) {
   # Validate inputs
   if (!is.character(query_blocks) || length(query_blocks) == 0) {
@@ -360,8 +417,11 @@ ensemble_link_blocked <- function(
     embedding_model = embedding_model,
     reranker_model = reranker_model,
     reranker_model_2 = reranker_model_2,
+    reranker_model_3 = reranker_model_3,
     pool_size = as.integer(pool_size),
-    device = device
+    device = device,
+    exact = exact,
+    index_cache = if (is.null(index_cache)) NULL else path.expand(index_cache)
   )
 
   # Index corpus
@@ -378,25 +438,25 @@ ensemble_link_blocked <- function(
 
   # Convert to data frame
   # Convert None/NULL to NA and adjust indices to 1-based
-  match_indices <- sapply(results$match_indices, function(x) {
+  match_indices <- unname(sapply(results$match_indices, function(x) {
     if (is.null(x)) NA_integer_ else as.integer(x) + 1L  # Convert to 1-based
-  })
+  }))
 
-  match_details <- sapply(results$match_details, function(x) {
+  match_details <- unname(sapply(results$match_details, function(x) {
     if (is.null(x)) NA_character_ else as.character(x)
-  })
+  }))
 
-  match_blocks <- sapply(results$match_blocks, function(x) {
+  match_blocks <- unname(sapply(results$match_blocks, function(x) {
     if (is.null(x)) NA_character_ else as.character(x)
-  })
+  }))
 
   if (return_scores) {
-    block_scores <- sapply(results$block_scores, function(x) {
+    block_scores <- unname(sapply(results$block_scores, function(x) {
       if (is.null(x)) NA_real_ else as.numeric(x)
-    })
-    detail_scores <- sapply(results$detail_scores, function(x) {
+    }))
+    detail_scores <- unname(sapply(results$detail_scores, function(x) {
       if (is.null(x)) NA_real_ else as.numeric(x)
-    })
+    }))
 
     df <- data.frame(
       query_block = query_blocks,
