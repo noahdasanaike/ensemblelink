@@ -6,7 +6,7 @@ Accurate record linkage in R without training data. Uses ensemble retrieval and 
 
 ```r
 # Install from GitHub
-devtools::install_github("username/ensemblelink")
+devtools::install_github("noahdasanaike/ensemblelink/r_package")
 
 # Or install locally
 devtools::install("path/to/ensemblelink")
@@ -24,7 +24,7 @@ install_ensemblelink()
 
 Or manually in Python:
 ```bash
-pip install torch "sentence-transformers>=2.7" rapidfuzz scikit-learn tqdm einops
+pip install torch "transformers<5" "sentence-transformers>=2.7" rapidfuzz scikit-learn scipy Unidecode tqdm einops
 ```
 
 ## Usage
@@ -50,18 +50,15 @@ print(results)
 
 ```r
 results <- ensemble_link(queries, corpus, return_scores = TRUE)
-print(results)
-#>           query             match     score
-#> 1 New York City      New York, NY 0.9823451
-#> 2    Los Angelas   Los Angeles, CA 0.9756234
-#> 3        Chcago       Chicago, IL 0.9812345
-#> 4      San Fran San Francisco, CA 0.9634521
+# adds match_index, score (the confidence), margin and reranker_probability
 ```
+
+`score` is the paper's confidence (rule B2): the mean of two percentile ranks among the queries linked in the same call, the rank of the fused top-minus-runner-up margin and the rank of the match's mean reranker probability; 0 when the top fused score is tied. It orders the matches of one call from least to most trustworthy and does not change which record is matched. It is relative to the call, not a probability: a threshold chosen on one set of queries carries over to another call only when the query sets are alike, and linking a batch in pieces gives different scores than linking it at once. `reranker_probability` is an absolute score.
 
 ### Custom Models
 
 ```r
-# Use different embedding/reranker models
+# Other models (rerankers: single-logit sequence-classification cross-encoders)
 results <- ensemble_link(
   queries, corpus,
   embedding_model = "BAAI/bge-small-en-v1.5",
@@ -71,17 +68,15 @@ results <- ensemble_link(
 
 ### Multi-Column Matching
 
-When matching on multiple columns (e.g., city + state), concatenate them before calling `ensemble_link()`. Concatenation consistently outperforms blocking-based approaches across benchmarks (see Dasanaike 2026, Table 3):
+Write each record as `field=value` pairs joined by `" | "` (omit missing fields), and set `multifield = TRUE`, which adds the paper's embedding instruction for multi-field records:
 
 ```r
-# Combine columns with a separator
-queries <- paste(df$city, df$state, sep = " | ")
-corpus  <- paste(ref$city, ref$state, sep = " | ")
-
-results <- ensemble_link(queries, corpus)
+queries <- paste0("city=", df$city, " | state=", df$state)
+corpus  <- paste0("city=", ref$city, " | state=", ref$state)
+results <- ensemble_link(queries, corpus, multifield = TRUE)
 ```
 
-The `" | "` separator works well in practice — it is rare enough to avoid collisions while being a single token in most embedding models. Any consistent delimiter will work.
+This is the field-count rule of the Python package (`link(..., columns_query=[...])`), which builds the text for you.
 
 ### Hierarchical Blocking
 
@@ -129,33 +124,38 @@ configure_python(python = "/path/to/python")
 | `queries` | (required) | Character vector of strings to match |
 | `corpus` | (required) | Character vector of reference strings |
 | `embedding_model` | "microsoft/harrier-oss-v1-0.6b" | Sentence-transformers model for embeddings |
-| `reranker_model` | "jinaai/jina-reranker-v2-base-multilingual" | First cross-encoder reranker |
-| `reranker_model_2` | "BAAI/bge-reranker-v2-m3" | Second cross-encoder reranker (NULL for one) |
-| `pool_size` | 50 | Candidates retrieved from each of dense and sparse |
-| `return_scores` | FALSE | Return fused match scores |
+| `reranker_model` | "jinaai/jina-reranker-v2-base-multilingual" | First reranker (CC-BY-NC-4.0; NULL to drop) |
+| `reranker_model_2` | "BAAI/bge-reranker-v2-m3" | Second reranker (Apache-2.0; NULL to drop) |
+| `reranker_model_3` | NULL | Optional third reranker, e.g. "zeroentropy/zerank-2-reranker" |
+| `pool_size` | 30 | Candidates retrieved from each of dense and sparse retrieval |
+| `multifield` | FALSE | Records are `field=value` pairs: add the multi-field embedding instruction |
+| `return_scores` | FALSE | Return `match_index`, `score`, `margin`, `reranker_probability` |
 | `show_progress` | TRUE | Show progress bar |
 | `device` | "auto" | "cuda", "cpu", or "auto" |
+| `exact` | TRUE | TRUE: the benchmark's batching (reproduces the paper). FALSE: each distinct query, record and pair scored once in length-sorted batches (faster with duplicates; bfloat16 scores differ at noise level) |
+| `index_cache` | NULL | Directory for an on-disk cache of the corpus index; a later call with the same corpus and settings loads it instead of re-embedding. Stored with Python's pickle: use a trusted directory |
+
+Licenses: the default set includes Jina v2 (CC-BY-NC-4.0) and is for non-commercial use. For commercial use, `reranker_model = NULL, reranker_model_3 = "zeroentropy/zerank-2-reranker"` keeps only Apache-2.0 and MIT models; it scored below the default in the paper's development tests (see the main README).
 
 ## How It Works
 
-For each query, EnsembleLink retrieves a candidate pool (the union of the top dense-embedding and top character-n-gram TF-IDF matches) and scores every candidate with four complementary experts:
+The R package runs the Python package's code (vendored in `inst/python/ensemblelink_py`), so results match `zeroshot_linkage` in Python. For each query, EnsembleLink retrieves a candidate pool (the union of the 30 nearest records by embedding cosine, exact search, and the 30 nearest by character TF-IDF on transliterated text; 60 by embedding when the query shares no character n-gram with the corpus) and scores every candidate with four experts:
 
-1. **Reranker ensemble** — two cross-encoders (Jina v2 and BGE v2-m3) score query-candidate pairs jointly; their z-scored ranks are summed.
-2. **CSLS-corrected dense cosine** — embedding cosine with a hubness penalty.
-3. **Sparse TF-IDF cosine** — character-n-gram overlap.
-4. **Jaro-Winkler** — classical lexical similarity.
+1. **Reranker ensemble**: Jina v2 and BGE v2-m3 read the query and candidate together; their per-pool z-scores are summed.
+2. **CSLS-corrected dense cosine**: embedding cosine with a hubness penalty.
+3. **Sparse TF-IDF cosine** on transliterated text.
+4. **Jaro-Winkler** on transliterated text.
 
-The experts are fused **without any labeled data**: each expert's weight is the squared fraction of queries on which its top pick agrees with the consensus. The weighted sum decides the match.
-
-The method requires no labeled training data and outperforms supervised approaches on standard benchmarks.
+The experts are fused **without labeled data**: each expert's weight is the squared share of queries on which its top pick agrees with the consensus (an expert with no spread over a pool abstains). On a GPU the models run in bfloat16, as in the paper.
 
 ## Citation
 
 ```bibtex
-@article{dasanaike2026ensemblelink,
-  title={EnsembleLink: Accurate Record Linkage Without Training Data},
-  author={Dasanaike, Noah},
-  year={2026}
+@unpublished{dasanaike2026zeroshot,
+  title  = {Pre-Trained Language Models as Zero-Shot Tools for Social Science Research},
+  author = {Dasanaike, Noah},
+  year   = {2026},
+  note   = {Working paper}
 }
 ```
 
