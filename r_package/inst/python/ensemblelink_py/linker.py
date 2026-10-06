@@ -134,8 +134,8 @@ def link(
     device : str, optional
         "cuda" or "cpu" (default: GPU if available).
     exact : bool
-        True (default): the models see the inputs and batches of the paper's
-        benchmark, whose results the package reproduces. False: each distinct
+        True (default): the models see fixed batches, so results are
+        deterministic for a given GPU. False: each distinct
         text and (query, candidate) pair is scored once, in length-sorted
         batches; faster, with noise-level score differences (README, Speed).
     index_cache : str, optional
@@ -146,7 +146,7 @@ def link(
     embed_batch_size, reranker_batch_size : int
         Batch sizes (embedding 256 in exact mode, adaptive in fast mode; reranker 128).
     dtype : str
-        Model precision: "auto" = bfloat16 on GPU (the paper's), float32 on CPU.
+        Model precision: "auto" = bfloat16 on GPU, float32 on CPU.
 
     Returns
     -------

@@ -18,10 +18,9 @@ zerank-2 (``zeroentropy/zerank-2-reranker``, Apache-2.0, 4B parameters) is an
 optional third reranker: a Sentence Transformers ``CrossEncoder`` in bfloat16
 whose raw "Yes" logit is mapped to the card's documented 0-1 score
 ``sigmoid(logit / 5)``. It is not in the default because it is about nine times
-slower per pair than Jina v2 and BGE together and did not pass the paper's
-development rule (see README).
+slower per pair than Jina v2 and BGE together.
 
-Default models are loaded at the Hugging Face revisions used in the paper.
+Default models are loaded at pinned Hugging Face revisions.
 """
 
 from typing import List, Optional

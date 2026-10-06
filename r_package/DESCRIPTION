@@ -7,8 +7,7 @@ Description: Performs fuzzy record linkage using four-expert agreement fusion. C
     are retrieved by an embedding-plus-TF-IDF ensemble and scored by a two-model
     cross-encoder reranker ensemble, a CSLS-corrected dense cosine, a sparse TF-IDF
     cosine, and Jaro-Winkler similarity, then fused without labels. Requires no labeled
-    training data and outperforms supervised methods on standard benchmarks. Uses a
-    Python backend via reticulate.
+    training data. Uses a Python backend via reticulate.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
