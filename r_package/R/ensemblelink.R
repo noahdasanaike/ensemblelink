@@ -157,7 +157,7 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #'
 #' For multi-column matching, write each record as \code{field=value} pairs
 #' joined by \code{" | "} (omit missing fields) and set \code{multifield = TRUE},
-#' which adds the paper's embedding instruction for multi-field records:
+#' which adds the embedding instruction for multi-field records:
 #' \preformatted{
 #' queries <- paste0("city=", df$city, " | state=", df$state)
 #' corpus  <- paste0("city=", ref$city, " | state=", ref$state)
@@ -176,8 +176,7 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #'   default Jina v2 reranker is licensed CC-BY-NC-4.0 (non-commercial); for
 #'   commercial use set \code{reranker_model = NULL} and
 #'   \code{reranker_model_3 = "zeroentropy/zerank-2-reranker"} (BGE v2-m3 and
-#'   zerank-2, both Apache-2.0), a set that scored below the default in the
-#'   paper's development tests.
+#'   zerank-2, both Apache-2.0). zerank-2 is considerably slower.
 #' @param pool_size Number of candidates retrieved from each of dense and sparse
 #'   retrieval (their union forms the pool). Default: 30
 #' @param multifield Logical; TRUE when records are several \code{field=value}
@@ -187,8 +186,8 @@ install_ensemblelink <- function(method = "auto", conda = "auto", envname = "r-e
 #'   components. Default: FALSE
 #' @param show_progress Logical; show progress bar. Default: TRUE
 #' @param device Device for inference: "cuda", "cpu", or "auto". Default: "auto"
-#' @param exact Logical. TRUE (default): the models see the inputs and batches of
-#'   the paper's benchmark, whose results the package reproduces. FALSE: each
+#' @param exact Logical. TRUE (default): the models see fixed batches, so results
+#'   are deterministic for a given GPU. FALSE: each
 #'   distinct query, corpus record and (query, candidate) pair is scored once, in
 #'   length-sorted batches; faster, above all with duplicated records, with
 #'   scores that differ at the noise level of bfloat16 GPU inference.

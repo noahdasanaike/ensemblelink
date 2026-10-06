@@ -29,11 +29,10 @@ from .reranker import (BGE_RERANKER, DEFAULT_RERANKER_BATCH, DEFAULT_RERANKER_MA
 from .retrieval import DEFAULT_EMBED_MAX_LENGTH, EnsembleRetriever, unique_inverse
 
 DEFAULT_EMBEDDING_MODEL = "microsoft/harrier-oss-v1-0.6b"
-# Reranker expert of the paper: Jina Reranker v2 (CC-BY-NC-4.0, non-commercial) and BGE Reranker
+# Default reranker expert: Jina Reranker v2 (CC-BY-NC-4.0, non-commercial) and BGE Reranker
 # v2-m3 (Apache-2.0).
 DEFAULT_RERANKER_MODELS = (JINA_RERANKER, BGE_RERANKER)
 # Every model licensed for commercial use (Apache-2.0 / MIT): BGE v2-m3 and zerank-2 in place of Jina v2.
-# It did not pass the paper's development rule (README, Licenses).
 COMMERCIAL_RERANKER_MODELS = (BGE_RERANKER, ZERANK_RERANKER)
 
 
@@ -67,8 +66,8 @@ class FusionMatcher:
     cache_dir : str, optional
         Model cache directory.
     exact : bool
-        True (default): the models see the inputs and batches of the paper's
-        benchmark, which the package then reproduces up to GPU nondeterminism.
+        True (default): the models see fixed batches, so results are
+        deterministic for a given GPU up to GPU nondeterminism.
         False: each distinct query text, corpus text and (query, candidate) pair
         goes through the models once, in length-sorted batches; faster, above all
         with duplicated records, with bfloat16 scores that move at noise level.
